@@ -1,4 +1,3 @@
-import imgArtemis from "figma:asset/342bc55c20cb63b402695a2cac5ef2561ff896a5.png";
 import { Sparkles } from "lucide-react";
 
 const BOOKS = [
@@ -18,7 +17,7 @@ const BOOKS = [
     title: "Artemis",
     author: "Andy Weir",
     reason: "More from Andy Weir",
-    cover: imgArtemis,
+    cover: "https://images.unsplash.com/photo-1599394463169-bd0bdf8e247a?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxteXN0ZXJ5JTIwdGhyaWxsZXIlMjBkYXJrJTIwYm9vayUyMGNvdmVyfGVufDF8fHx8MTc3NDI4OTM1Mnww&ixlib=rb-4.1.0&q=80&w=400",
   },
 ];
 
