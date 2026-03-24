@@ -1,10 +1,11 @@
-import { X, Trash2, Download, Info, Upload, Key, Sparkles, Database } from 'lucide-react';
+import { X, Trash2, Download, Info, Upload, Key, Sparkles, Database, LogOut } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useTheme } from '../contexts/ThemeContext';
 import { useBooks } from '../contexts/BooksContext';
 import { useBadges } from '../contexts/BadgesContext';
 import { useState } from 'react';
 import { getGoogleBooksApiKey, setGoogleBooksApiKey, clearGoogleBooksApiKey, hasApiKey } from '../utils/authorDatabase';
+import { useAuth } from '../contexts/AuthContext';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -16,6 +17,7 @@ export function SettingsModal({ isOpen, onClose, onOpenImport }: SettingsModalPr
   const { currentTheme } = useTheme();
   const { books, readingSessions, bookshelves } = useBooks();
   const { earnedBadges } = useBadges();
+  const { signOut, isConfigured } = useAuth();
   const [isClearing, setIsClearing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [apiKey, setApiKey] = useState(hasApiKey() ? getGoogleBooksApiKey() : '');
@@ -416,6 +418,32 @@ export function SettingsModal({ isOpen, onClose, onOpenImport }: SettingsModalPr
                     </div>
                   </div>
                 </button>
+
+                {isConfigured && (
+                  <button
+                    onClick={async () => {
+                      await signOut();
+                      onClose();
+                    }}
+                    className="w-full p-4 rounded-xl flex items-center justify-between transition-colors hover:scale-[1.02] border border-amber-500/30"
+                    style={{ backgroundColor: currentTheme.cardColor }}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-full flex items-center justify-center bg-amber-500/20">
+                        <LogOut className="w-5 h-5 text-amber-500" />
+                      </div>
+                      <div className="flex-1 text-left">
+                        <div className="font-bold text-sm text-amber-500">Sign Out</div>
+                        <div
+                          className="text-xs"
+                          style={{ color: currentTheme.textColor === 'light' ? '#9ca3af' : '#6b7280' }}
+                        >
+                          Keep your account secure on shared devices
+                        </div>
+                      </div>
+                    </div>
+                  </button>
+                )}
 
                 {/* Info */}
                 <div

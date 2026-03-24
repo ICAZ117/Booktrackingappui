@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { Home, Calendar, Search, Library, TrendingUp, Book } from 'lucide-react';
 import { Dashboard } from './components/Dashboard';
 import { CalendarView } from './components/CalendarView';
@@ -25,14 +25,17 @@ import { BrokenCoversList } from './components/BrokenCoversList';
 import { DataFixTool } from './components/DataFixTool';
 import { EmergencyDataRecovery } from './components/EmergencyDataRecovery';
 import { ImportBackupTool } from './components/ImportBackupTool';
+import { AuthScreen } from './components/AuthScreen';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
 import { BooksProvider, useBooks } from './contexts/BooksContext';
 import { BadgesProvider, useBadges } from './contexts/BadgesContext';
 import { AuthorProvider } from './contexts/AuthorContext';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { checkBadges } from './utils/badgeChecker';
 import { motion, AnimatePresence } from 'motion/react';
 import { getMigrationCount, migrateAllBooks, MigrationProgress } from './utils/bookMigration';
 import { api } from './utils/api';
+import { repairMissingBookCovers } from './services/coverRepairService';
 
 // CACHE-BUST VERSION CHECK - v4.0.2
 const APP_VERSION = '4.0.3-RECOVERY-' + Date.now();
@@ -79,7 +82,28 @@ const navigation: { id: View; name: string; icon: typeof Home }[] = [
 ];
 
 export default function App() {
-  // Main app with all providers - ensures contexts are available throughout the app
+  return (
+    <AuthProvider>
+      <AuthenticatedApp />
+    </AuthProvider>
+  );
+}
+
+function AuthenticatedApp() {
+  const { user, isLoading, isConfigured } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen w-full flex items-center justify-center bg-[#0b0f19] text-white">
+        Loading ReadTrack...
+      </div>
+    );
+  }
+
+  if (isConfigured && !user) {
+    return <AuthScreen />;
+  }
+
   return (
     <ThemeProvider>
       <BooksProvider>
@@ -95,7 +119,7 @@ export default function App() {
 
 function AppContent() {
   const { currentTheme } = useTheme();
-  const { books, readingSessions, bookshelves, updateBook, addBook, updateBookshelves, refreshBooks, fetchMissingCovers, refetchAllCovers, restoreCoversFromBackup, emergencyRecovery, isLoaded: booksLoaded } = useBooks();
+  const { books, readingSessions, bookshelves, updateBook, addBook, logReadingSession, updateBookshelves, refreshBooks, fetchMissingCovers, refetchAllCovers, restoreCoversFromBackup, emergencyRecovery, isLoaded: booksLoaded } = useBooks();
   const { earnedBadges, unlockBadge, isLoaded: badgesLoaded } = useBadges();
   
   // ALL useState hooks MUST come before any conditional returns
@@ -126,6 +150,7 @@ function AppContent() {
   const [isImportBooksOpen, setIsImportBooksOpen] = useState(false);
   const [isRestoringCovers, setIsRestoringCovers] = useState(false);
   const [customShelves, setCustomShelves] = useState<any[]>([]);
+  const hasRunCoverRepair = useRef(false);
   
   // Initialize reading history from localStorage
   const [readingHistory, setReadingHistory] = useState<{ [date: string]: boolean }>(() => {
@@ -266,6 +291,31 @@ function AppContent() {
     //   }, 2000);
     // }
   }, [booksLoaded, books.length]);
+
+  // Background cover repair job (throttled) for missing/invalid covers
+  useEffect(() => {
+    if (!booksLoaded || hasRunCoverRepair.current) return;
+    hasRunCoverRepair.current = true;
+
+    const COVER_REPAIR_INTERVAL_MS = 1000 * 60 * 60 * 6; // 6 hours
+    const lastRunRaw = localStorage.getItem('readtrack_cover_repair_last_run');
+    const lastRun = lastRunRaw ? Number(lastRunRaw) : 0;
+    const shouldRun = Date.now() - lastRun > COVER_REPAIR_INTERVAL_MS;
+
+    if (!shouldRun) return;
+
+    const runRepair = async () => {
+      try {
+        const result = await repairMissingBookCovers(books, updateBook, { maxBooks: 15 });
+        console.log('🛠️ Cover repair completed:', result);
+        localStorage.setItem('readtrack_cover_repair_last_run', String(Date.now()));
+      } catch (error) {
+        console.error('Cover repair job failed:', error);
+      }
+    };
+
+    runRepair();
+  }, [booksLoaded, books, updateBook]);
 
   // Calculate missing covers count - MUST be before conditional return
   const missingCoversCount = useMemo(() => {
@@ -425,15 +475,14 @@ function AppContent() {
     
     // Create a reading session
     const today = new Date().toISOString().split('T')[0];
-    const sessions = JSON.parse(localStorage.getItem('readtrack_sessions') || '[]');
-    sessions.push({
+    const session = {
       id: `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       bookId: book.id,
       pages: data.pages,
       minutes: data.minutes,
       date: today,
-    });
-    localStorage.setItem('readtrack_sessions', JSON.stringify(sessions));
+    };
+    await logReadingSession(session);
     
     // Update reading history (mark today as read)
     const newHistory = { ...readingHistory, [today]: true };

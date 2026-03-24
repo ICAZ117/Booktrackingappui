@@ -1,3 +1,5 @@
+import { getBookByISBN, searchBooksByTitle } from './googleBooksApi';
+
 export interface BookSearchResult {
   title: string;
   author?: string;
@@ -7,10 +9,17 @@ export interface BookSearchResult {
 }
 
 export async function searchBook(title: string, author?: string): Promise<BookSearchResult | null> {
+  const query = author ? `${title} ${author}` : title;
+  const results = await searchBooksByTitle(query);
+  const match = results[0];
+  if (!match) return null;
+
   return {
-    title,
-    author,
-    source: "ui-only",
+    title: match.title,
+    author: match.author,
+    cover: match.cover,
+    isbn: match.isbn,
+    source: 'live-provider',
   };
 }
 
@@ -21,9 +30,14 @@ export async function searchBooks(
 }
 
 export async function searchByISBN(isbn: string): Promise<BookSearchResult | null> {
+  const result = await getBookByISBN(isbn);
+  if (!result) return null;
+
   return {
-    title: "Unknown Book",
+    title: result.volumeInfo.title,
+    author: result.volumeInfo.authors?.[0],
+    cover: result.volumeInfo.imageLinks?.thumbnail || result.volumeInfo.imageLinks?.smallThumbnail,
     isbn,
-    source: "ui-only",
+    source: 'live-provider',
   };
 }

@@ -616,7 +616,7 @@ export function Dashboard({ onBookSelect, onNavigate, onOpenImport, onBookFinish
       {/* Theme Picker */}
       <ThemePicker />
 
-      {/* Import Books Button - Only show for new users without any books */}
+      {/* Import Files Button - Only show for new users without any books */}
       {books.length === 0 && (
         <motion.button
           onClick={() => onOpenImport?.()}
@@ -646,7 +646,7 @@ export function Dashboard({ onBookSelect, onNavigate, onOpenImport, onBookFinish
                 className="font-bold text-sm"
                 style={{ color: '#ffffff' }}
               >
-                Import Books
+                Import Files
               </div>
               <div 
                 className="text-xs"
@@ -714,7 +714,7 @@ export function Dashboard({ onBookSelect, onNavigate, onOpenImport, onBookFinish
                     <span className="font-semibold">Ready to track your reading?</span>
                     <br />
                     <span className="text-xs" style={{ color: 'rgba(255,255,255,0.8)' }}>
-                      Add your first book to get started! 📖
+                      Import your past reading data or add your first book 📖
                     </span>
                   </div>
                 </div>
