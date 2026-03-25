@@ -135,6 +135,20 @@
 
   html {
     font-size: var(--font-size);
+    width: 100%;
+    overflow-x: hidden;
+  }
+
+  body {
+    width: 100%;
+    min-height: 100dvh;
+    overflow-x: hidden;
+  }
+
+  #root {
+    width: 100%;
+    min-height: 100dvh;
+    overflow-x: hidden;
   }
 
   h1 {
@@ -232,5 +246,14 @@
 
   input[type="range"]::-moz-range-thumb:active {
     transform: scale(1.2);
+  }
+
+  /* Utility helpers for notched phones and gesture bars */
+  .safe-top {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
   }
 }

@@ -351,7 +351,7 @@ function AppContent() {
   // Don't render until contexts are loaded (AFTER all hooks are declared)
   if (!booksLoaded || !badgesLoaded) {
     return (
-      <div className="h-screen w-screen flex items-center justify-center" style={{ backgroundColor: currentTheme.backgroundColor }}>
+      <div className="min-h-dvh w-full flex items-center justify-center" style={{ backgroundColor: currentTheme.backgroundColor }}>
         <div className="text-center">
           <div className="w-16 h-16 mx-auto mb-4 rounded-full animate-pulse" style={{ 
             background: currentTheme.tertiary 
@@ -623,12 +623,12 @@ function AppContent() {
 
   return (
     <div 
-      className="min-h-screen flex items-center justify-center p-4"
+      className="min-h-dvh w-full overflow-x-hidden flex items-stretch justify-center md:items-center md:p-4"
       style={{ backgroundColor: currentTheme.backgroundColor }}
     >
       {/* Phone Frame */}
       <div 
-        className="w-full max-w-[430px] h-[932px] rounded-[60px] shadow-2xl flex flex-col relative border-8"
+        className="w-full max-w-[430px] min-h-dvh safe-top md:min-h-0 md:h-[932px] md:rounded-[60px] md:shadow-2xl flex flex-col relative overflow-hidden md:border-8"
         style={{
           backgroundColor: currentTheme.backgroundColor,
           borderColor: currentTheme.backgroundColor,
@@ -636,13 +636,13 @@ function AppContent() {
       >
         {/* Notch */}
         <div 
-          className="absolute top-0 left-1/2 -translate-x-1/2 w-40 h-8 rounded-b-3xl z-50"
+          className="hidden md:block absolute top-0 left-1/2 -translate-x-1/2 w-40 h-8 rounded-b-3xl z-50"
           style={{ backgroundColor: currentTheme.backgroundColor }}
         />
         
         {/* Status Bar */}
         <div 
-          className="pt-12 pb-3 px-6 flex items-center justify-between text-xs"
+          className="hidden md:flex pt-12 pb-3 px-6 items-center justify-between text-xs"
           style={{ backgroundColor: currentTheme.backgroundColor }}
         >
           <span 
@@ -825,7 +825,7 @@ function AppContent() {
 
         {/* Main Content - Scrollable */}
         <main 
-          className={`flex-1 overflow-y-auto ${(currentView !== 'book-detail' && currentView !== 'badges' && currentView !== 'goals') ? 'pb-24' : 'pb-0'}`}
+          className={`flex-1 overflow-y-auto overflow-x-hidden ${(currentView !== 'book-detail' && currentView !== 'badges' && currentView !== 'goals') ? 'pb-24' : 'pb-0'}`}
           style={{ backgroundColor: currentTheme.backgroundColor }}
         >
           <div className={(currentView !== 'book-detail' && currentView !== 'badges' && currentView !== 'goals') ? 'p-4' : ''}>
