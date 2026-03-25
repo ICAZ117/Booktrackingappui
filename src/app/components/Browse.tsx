@@ -46,6 +46,13 @@ export function Browse({ onBookSelect }: { onBookSelect?: (book: any) => void })
   const [listBooks, setListBooks] = useState<BookData[]>([]);
   const [isLoadingList, setIsLoadingList] = useState(false);
 
+  const looksLikeAuthorQuery = (query: string) => {
+    const q = query.toLowerCase().trim();
+    if (!q || q.includes(':') || q.includes('"')) return false;
+    const words = q.split(/\s+/).filter(Boolean);
+    return words.length >= 2 && words.length <= 4;
+  };
+
   const getGradientBg = () => {
     return currentTheme.isGradient
       ? `linear-gradient(135deg, ${currentTheme.primary} 0%, ${currentTheme.secondary} 100%)`
@@ -257,9 +264,10 @@ export function Browse({ onBookSelect }: { onBookSelect?: (book: any) => void })
       const timeoutId = setTimeout(async () => {
         setIsSearching(true);
         try {
+          const isAuthorSearch = looksLikeAuthorQuery(searchQuery);
           const results = await searchBooks({
             query: searchQuery,
-            maxResults: 20,
+            maxResults: isAuthorSearch ? 60 : 20,
           });
           const bookData = results.map(convertGoogleBookToBookData);
           setExternalSearchResults(bookData);

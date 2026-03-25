@@ -63,9 +63,40 @@ create table if not exists public.book_search_cache (
   created_at timestamptz not null default now()
 );
 
+-- Goodreads-style foundation: persistent shared catalog
+create table if not exists public.catalog_books (
+  id uuid primary key default gen_random_uuid(),
+  unique_key text not null unique,
+  title text not null,
+  author text not null,
+  cover text,
+  description text,
+  genre text,
+  genres text[],
+  published_date text,
+  language text,
+  isbn text,
+  format text,
+  source text,
+  external_id text,
+  rating numeric,
+  ratings_count integer,
+  pages integer,
+  is_box_set boolean not null default false,
+  is_sample boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_catalog_books_title on public.catalog_books using btree (title);
+create index if not exists idx_catalog_books_author on public.catalog_books using btree (author);
+create index if not exists idx_catalog_books_published_date on public.catalog_books using btree (published_date);
+create index if not exists idx_catalog_books_search on public.catalog_books using gin (to_tsvector('simple', coalesce(title,'') || ' ' || coalesce(author,'')));
+
 alter table public.books enable row level security;
 alter table public.reading_sessions enable row level security;
 alter table public.bookshelves enable row level security;
+alter table public.catalog_books enable row level security;
 
 drop policy if exists "books_select_own" on public.books;
 create policy "books_select_own" on public.books
@@ -115,6 +146,18 @@ drop policy if exists "shelves_delete_own" on public.bookshelves;
 create policy "shelves_delete_own" on public.bookshelves
 for delete using (auth.uid() = user_id);
 
+drop policy if exists "catalog_books_read_auth" on public.catalog_books;
+create policy "catalog_books_read_auth" on public.catalog_books
+for select using (auth.uid() is not null);
+
+drop policy if exists "catalog_books_insert_auth" on public.catalog_books;
+create policy "catalog_books_insert_auth" on public.catalog_books
+for insert with check (auth.uid() is not null);
+
+drop policy if exists "catalog_books_update_auth" on public.catalog_books;
+create policy "catalog_books_update_auth" on public.catalog_books
+for update using (auth.uid() is not null) with check (auth.uid() is not null);
+
 create or replace function public.update_timestamp()
 returns trigger
 language plpgsql
@@ -133,4 +176,9 @@ for each row execute procedure public.update_timestamp();
 drop trigger if exists trg_bookshelves_updated_at on public.bookshelves;
 create trigger trg_bookshelves_updated_at
 before update on public.bookshelves
+for each row execute procedure public.update_timestamp();
+
+drop trigger if exists trg_catalog_books_updated_at on public.catalog_books;
+create trigger trg_catalog_books_updated_at
+before update on public.catalog_books
 for each row execute procedure public.update_timestamp();

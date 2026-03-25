@@ -4,6 +4,7 @@
 This project started as a Figma Make prototype and has been upgraded toward production with:
 - Supabase auth + user data sync
 - Live book search from external providers (Google Books + Open Library fallback)
+- Persistent catalog-first search foundation (Goodreads-style direction)
 - Import/export flows for library migration
 
 Original design source: https://www.figma.com/design/SpiJwwrnvSAfGuGyK8qbhw/Book-Tracking-App-UI
