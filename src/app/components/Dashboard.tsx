@@ -13,6 +13,7 @@ import { DataFixTool } from './DataFixTool';
 import { ReadingStories, StreakStory, BooksStory, AudiobooksStory, PagesStory, ThisWeekStory, ReadingGoalsStory, DetailedStatsStory, MonthlyRecapStory, YearInReviewStory, TopBooksStory, StreakDetailsStory, GenreBreakdownStory, ReadingSpeedStory, RatingBreakdownStory, ReadingCalendarStory, MonthlyBooksGridStory, MonthlyStatsGridStory, PagesPerDayChartStory, AverageStatsStory } from './ReadingStories';
 import { useTheme, getTextColorForBackground } from '../contexts/ThemeContext';
 import { useBooks } from '../contexts/BooksContext';
+import { convertGoogleBookToBookData, getPopularBooksFeed, getTrendingBooks, searchBooks } from '../utils/googleBooksApi';
 import { LoadingSpinner } from './LoadingSpinner';
 import { ErrorMessage } from './ErrorMessage';
 import { motion } from 'motion/react';
@@ -23,11 +24,37 @@ import { BookDetailModal } from './BookDetailModal';
 const DASHBOARD_VERSION = '4.1.0';
 console.log(`Dashboard v${DASHBOARD_VERSION} loaded`);
 
-const recommendations = [
-  { title: "Iron Flame", author: "Rebecca Yarros", cover: "https://covers.openlibrary.org/b/isbn/9781649374170-L.jpg", reason: "Because you loved Fourth Wing" },
-  { title: "The Inmate", author: "Freida McFadden", cover: "https://covers.openlibrary.org/b/isbn/9781538742686-L.jpg", reason: "Similar to The Housemaid" },
-  { title: "Artemis", author: "Andy Weir", cover: "https://covers.openlibrary.org/b/isbn/9780553448122-L.jpg", reason: "More from Andy Weir" },
-];
+type DiscoveryBook = {
+  id?: string;
+  googleBooksId?: string;
+  title: string;
+  author: string;
+  cover: string;
+  pages?: number;
+  genre?: string;
+  genres?: string[];
+  rating?: number;
+  ratingsCount?: number;
+  description?: string;
+  isbn?: string;
+  publishedDate?: string;
+  status?: string;
+  format?: string;
+  reason?: string;
+};
+
+const normalizeText = (value?: string) => (value || '').toLowerCase().replace(/\s+/g, ' ').trim();
+const normalizeIsbn = (value?: string) => (value || '').replace(/[^0-9x]/gi, '').toLowerCase();
+
+const getDiscoveryKey = (book: { title?: string; author?: string; isbn?: string }) => {
+  const isbn = normalizeIsbn(book.isbn);
+  if (isbn) return `isbn:${isbn}`;
+
+  const normalizedTitle = normalizeText(book.title);
+  const normalizedAuthor = normalizeText(book.author);
+  if (!normalizedTitle) return '';
+  return `${normalizedTitle}::${normalizedAuthor}`;
+};
 
 export function Dashboard({ onBookSelect, onNavigate, onOpenImport, onBookFinished }: { onBookSelect?: (book: any) => void; onNavigate?: (view: 'badges') => void; onOpenImport?: () => void; onBookFinished?: (book: any) => void }) {
   const { currentTheme } = useTheme();
@@ -48,6 +75,12 @@ export function Dashboard({ onBookSelect, onNavigate, onOpenImport, onBookFinish
   const [onNavigateToBadges, setOnNavigateToBadges] = useState<(() => void) | undefined>(undefined);
   const [showDataFix, setShowDataFix] = useState(false);
   const [customShelves, setCustomShelves] = useState<any[]>([]);
+  const [popularBooks, setPopularBooks] = useState<DiscoveryBook[]>([]);
+  const [popularBooksSource, setPopularBooksSource] = useState<'nyt' | 'live-trending'>('live-trending');
+  const [popularBooksFetchedAt, setPopularBooksFetchedAt] = useState<string>('');
+  const [recommendedBooks, setRecommendedBooks] = useState<DiscoveryBook[]>([]);
+  const [isLoadingPopularBooks, setIsLoadingPopularBooks] = useState(false);
+  const [isLoadingRecommendedBooks, setIsLoadingRecommendedBooks] = useState(false);
   
   // Initialize reading history from localStorage or start fresh
   const [readingHistory, setReadingHistory] = useState<{ [date: string]: boolean }>(() => {
@@ -609,7 +642,172 @@ export function Dashboard({ onBookSelect, onNavigate, onOpenImport, onBookFinish
     setReadingDays(newReadingDays);
   }, [readingHistory]);
 
+  // Live popular books feed for dashboard home.
+  useEffect(() => {
+    let isActive = true;
+
+    const fetchPopularBooks = async () => {
+      setIsLoadingPopularBooks(true);
+      try {
+        const popularFeed = await getPopularBooksFeed();
+        const mapped = popularFeed.books
+          .filter((book) => book.title && book.author)
+          .slice(0, 12);
+
+        if (isActive) {
+          setPopularBooks(mapped);
+          setPopularBooksSource(popularFeed.source);
+          setPopularBooksFetchedAt(popularFeed.fetchedAt);
+        }
+      } catch (error) {
+        console.error('Failed to fetch dashboard popular books:', error);
+        if (isActive) {
+          setPopularBooks([]);
+        }
+      } finally {
+        if (isActive) {
+          setIsLoadingPopularBooks(false);
+        }
+      }
+    };
+
+    fetchPopularBooks();
+    return () => {
+      isActive = false;
+    };
+  }, []);
+
+  // Personalized recommendation feed based on user reading history.
+  useEffect(() => {
+    let isActive = true;
+
+    const fetchRecommendations = async () => {
+      if (!books.length) {
+        setRecommendedBooks([]);
+        return;
+      }
+
+      setIsLoadingRecommendedBooks(true);
+      try {
+        const ownedKeys = new Set(
+          books
+            .map((book) => getDiscoveryKey(book))
+            .filter(Boolean),
+        );
+
+        const authorCounts: Record<string, number> = {};
+        const genreCounts: Record<string, number> = {};
+        const highRatedFinished = books
+          .filter((book) => book.status === 'finished' && (book.rating || 0) >= 4)
+          .sort((a, b) => (b.rating || 0) - (a.rating || 0))
+          .slice(0, 3);
+
+        books
+          .filter((book) => book.status === 'reading' || book.status === 'finished')
+          .forEach((book) => {
+            if (book.author) {
+              authorCounts[book.author] = (authorCounts[book.author] || 0) + (book.status === 'reading' ? 2 : 1);
+            }
+
+            const primaryGenre = book.genre || book.categories?.[0];
+            if (primaryGenre) {
+              genreCounts[primaryGenre] = (genreCounts[primaryGenre] || 0) + (book.status === 'reading' ? 2 : 1);
+            }
+          });
+
+        const topAuthors = Object.entries(authorCounts)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 3)
+          .map(([author]) => author);
+
+        const topGenres = Object.entries(genreCounts)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 3)
+          .map(([genre]) => genre);
+
+        const queryPlans: Array<{ query: string; reason: string }> = [];
+        const seenQueries = new Set<string>();
+        const addQuery = (query: string, reason: string) => {
+          const trimmed = query.trim();
+          if (!trimmed || seenQueries.has(trimmed)) return;
+          seenQueries.add(trimmed);
+          queryPlans.push({ query: trimmed, reason });
+        };
+
+        topAuthors.forEach((author) => addQuery(`inauthor:"${author}"`, `Because you read ${author}`));
+        topGenres.forEach((genre) => addQuery(`subject:${genre} fiction`, `Popular in your favorite genre: ${genre}`));
+        highRatedFinished.forEach((book) =>
+          addQuery(`${book.author} ${book.genre || 'novel'}`, `Because you liked ${book.title}`),
+        );
+        addQuery('subject:fiction bestseller', 'Popular with readers right now');
+
+        const limitedPlans = queryPlans.slice(0, 6);
+        const settled = await Promise.allSettled(
+          limitedPlans.map((plan) =>
+            searchBooks({
+              query: plan.query,
+              maxResults: 12,
+              orderBy: 'relevance',
+            }),
+          ),
+        );
+
+        const deduped = new Map<string, DiscoveryBook>();
+        settled.forEach((result, index) => {
+          if (result.status !== 'fulfilled') return;
+          const reason = limitedPlans[index]?.reason;
+
+          result.value
+            .map(convertGoogleBookToBookData)
+            .forEach((candidate) => {
+              const key = getDiscoveryKey(candidate);
+              if (!key || ownedKeys.has(key) || deduped.has(key)) return;
+              deduped.set(key, { ...candidate, reason });
+            });
+        });
+
+        let picks = Array.from(deduped.values()).slice(0, 12);
+
+        if (picks.length < 8) {
+          const fallback = await getTrendingBooks();
+          fallback
+            .map(convertGoogleBookToBookData)
+            .forEach((candidate) => {
+              if (picks.length >= 12) return;
+              const key = getDiscoveryKey(candidate);
+              if (!key || ownedKeys.has(key) || deduped.has(key)) return;
+              deduped.set(key, { ...candidate, reason: 'Popular with readers right now' });
+            });
+
+          picks = Array.from(deduped.values()).slice(0, 12);
+        }
+
+        if (isActive) {
+          setRecommendedBooks(picks);
+        }
+      } catch (error) {
+        console.error('Failed to fetch dashboard recommendations:', error);
+        if (isActive) {
+          setRecommendedBooks([]);
+        }
+      } finally {
+        if (isActive) {
+          setIsLoadingRecommendedBooks(false);
+        }
+      }
+    };
+
+    fetchRecommendations();
+    return () => {
+      isActive = false;
+    };
+  }, [books]);
+
   const isReadToday = readingDays[getTodayIndex()];
+  const hasAnyShelvedBooks =
+    bookshelves.some((shelf) => (shelf.bookIds || []).length > 0) ||
+    customShelves.some((shelf) => (shelf.bookIds || []).length > 0);
+  const shouldShowPersonalizedRecommendations = books.length > 0 || hasAnyShelvedBooks;
 
   return (
     <div className="space-y-6">
@@ -1619,7 +1817,7 @@ export function Dashboard({ onBookSelect, onNavigate, onOpenImport, onBookFinish
         ))}
       </div>
 
-      {/* Recommendations */}
+      {/* Popular Books */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -1632,19 +1830,32 @@ export function Dashboard({ onBookSelect, onNavigate, onOpenImport, onBookFinish
               className="text-xl font-bold"
               style={{ color: currentTheme.textColor === 'light' ? '#f3f4f6' : '#111827' }}
             >
-              {isNewUser ? 'Popular Books' : 'Recommended for You'}
+              Popular Books
             </h2>
           </div>
         </div>
+        <p
+          className="text-[11px] -mt-2 mb-3"
+          style={{ color: currentTheme.textColor === 'light' ? '#9ca3af' : '#6b7280' }}
+        >
+          Source: {popularBooksSource === 'nyt' ? 'NYT Best Sellers' : 'Live Trending Index'}
+          {popularBooksFetchedAt ? ` · Updated ${new Date(popularBooksFetchedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}
+        </p>
         <div className="flex gap-3 overflow-x-auto pb-2 -mx-4 px-4">
-          {recommendations.map((book, index) => (
+          {isLoadingPopularBooks && popularBooks.length === 0 && (
+            <div className="py-4">
+              <LoadingSpinner text="Loading popular books..." />
+            </div>
+          )}
+          {popularBooks.map((book, index) => (
             <motion.div
-              key={index}
+              key={book.isbn || book.googleBooksId || `${book.title}-${index}`}
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
               transition={{ delay: 0.9 + index * 0.1 }}
               whileHover={{ scale: 1.05, y: -5 }}
               className="flex-shrink-0 w-32 cursor-pointer"
+              onClick={() => handleBookClick(book)}
             >
               <div className="aspect-[2/3] rounded-lg overflow-hidden shadow-md mb-2 relative">
                 <BookCover 
@@ -1652,11 +1863,6 @@ export function Dashboard({ onBookSelect, onNavigate, onOpenImport, onBookFinish
                   alt={book.title}
                   className="w-full h-full object-cover"
                 />
-                {!isNewUser && (
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex items-end p-2">
-                    <span className="text-white text-[9px] font-semibold leading-tight">{book.reason}</span>
-                  </div>
-                )}
               </div>
               <h3 
                 className="text-xs font-semibold line-clamp-2 mb-0.5"
@@ -1672,8 +1878,88 @@ export function Dashboard({ onBookSelect, onNavigate, onOpenImport, onBookFinish
               </p>
             </motion.div>
           ))}
+          {!isLoadingPopularBooks && popularBooks.length === 0 && (
+            <p
+              className="text-sm"
+              style={{ color: currentTheme.textColor === 'light' ? '#9ca3af' : '#6b7280' }}
+            >
+              Popular books are temporarily unavailable.
+            </p>
+          )}
         </div>
       </motion.div>
+
+      {/* Personalized Recommendations */}
+      {shouldShowPersonalizedRecommendations && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.9 }}
+        >
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5" style={{ color: currentTheme.accentColor }} />
+              <h2
+                className="text-xl font-bold"
+                style={{ color: currentTheme.textColor === 'light' ? '#f3f4f6' : '#111827' }}
+              >
+                Recommended for You
+              </h2>
+            </div>
+          </div>
+          <div className="flex gap-3 overflow-x-auto pb-2 -mx-4 px-4">
+            {isLoadingRecommendedBooks && recommendedBooks.length === 0 && (
+              <div className="py-4">
+                <LoadingSpinner text="Finding books you'll love..." />
+              </div>
+            )}
+            {recommendedBooks.map((book, index) => (
+              <motion.div
+                key={book.isbn || book.googleBooksId || `recommended-${book.title}-${index}`}
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ delay: 1 + index * 0.08 }}
+                whileHover={{ scale: 1.05, y: -5 }}
+                className="flex-shrink-0 w-32 cursor-pointer"
+                onClick={() => handleBookClick(book)}
+              >
+                <div className="aspect-[2/3] rounded-lg overflow-hidden shadow-md mb-2 relative">
+                  <BookCover
+                    src={book.cover}
+                    alt={book.title}
+                    className="w-full h-full object-cover"
+                  />
+                  {book.reason && (
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex items-end p-2">
+                      <span className="text-white text-[9px] font-semibold leading-tight">{book.reason}</span>
+                    </div>
+                  )}
+                </div>
+                <h3
+                  className="text-xs font-semibold line-clamp-2 mb-0.5"
+                  style={{ color: currentTheme.textColor === 'light' ? '#f3f4f6' : '#111827' }}
+                >
+                  {book.title}
+                </h3>
+                <p
+                  className="text-[10px]"
+                  style={{ color: currentTheme.textColor === 'light' ? '#9ca3af' : '#6b7280' }}
+                >
+                  {book.author}
+                </p>
+              </motion.div>
+            ))}
+            {!isLoadingRecommendedBooks && recommendedBooks.length === 0 && (
+              <p
+                className="text-sm"
+                style={{ color: currentTheme.textColor === 'light' ? '#9ca3af' : '#6b7280' }}
+              >
+                Add or finish a few books to unlock personalized recommendations.
+              </p>
+            )}
+          </div>
+        </motion.div>
+      )}
 
       {/* Badges & Milestones */}
       <motion.div

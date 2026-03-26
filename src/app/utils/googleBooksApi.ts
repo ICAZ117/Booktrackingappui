@@ -100,6 +100,7 @@ const OPEN_LIBRARY_AUTHOR_SEARCH_API_URL = 'https://openlibrary.org/search/autho
 const ITUNES_SEARCH_API_URL = 'https://itunes.apple.com/search';
 const customSearchEndpoint = import.meta.env.VITE_BOOK_SEARCH_ENDPOINT || '';
 const googleBooksApiKey = import.meta.env.VITE_GOOGLE_BOOKS_API_KEY || '';
+const nytBooksApiKey = import.meta.env.VITE_NYT_BOOKS_API_KEY || '';
 const SEARCH_CACHE_TTL_MS = 15 * 60 * 1000;
 const SEARCH_CACHE_PREFIX = 'readtrack_search_cache_v15:';
 const PROVIDER_FETCH_TIMEOUT_MS = 7000;
@@ -127,6 +128,10 @@ function buildGoogleUrl(params: SearchBooksParams) {
 
 function normalizeText(value?: string) {
   return (value || '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function normalizeIsbn(value?: string) {
+  return (value || '').replace(/[^0-9x]/gi, '').toLowerCase();
 }
 
 function isUntitledTitle(title?: string) {
@@ -914,6 +919,367 @@ export async function getTrendingBooks(genre?: string): Promise<GoogleBook[]> {
     maxResults: 24,
     orderBy: 'newest',
   });
+}
+
+const GENRE_DISCOVERY_TERMS: Record<string, string[]> = {
+  Fantasy: ['fantasy', 'epic fantasy', 'urban fantasy'],
+  Romance: ['romance', 'contemporary romance', 'rom-com'],
+  Thriller: ['thriller', 'psychological thriller', 'suspense'],
+  'Sci-Fi': ['science fiction', 'space opera', 'dystopian'],
+  Contemporary: ['contemporary fiction', 'literary fiction', 'women fiction'],
+  Mystery: ['mystery', 'detective fiction', 'crime fiction'],
+  Historical: ['historical fiction', 'historical romance', 'war fiction'],
+};
+
+const GENRE_MATCH_KEYWORDS: Record<string, string[]> = {
+  Fantasy: ['fantasy', 'magic', 'dragon', 'fae', 'sword'],
+  Romance: ['romance', 'romantic', 'love', 'relationship', 'heart'],
+  Thriller: ['thriller', 'suspense', 'crime', 'murder', 'psychological'],
+  'Sci-Fi': ['science fiction', 'sci-fi', 'space', 'dystopian', 'future'],
+  Contemporary: ['contemporary', 'literary', 'family', 'friendship', 'coming-of-age'],
+  Mystery: ['mystery', 'detective', 'investigation', 'whodunit', 'crime'],
+  Historical: ['historical', 'period', 'world war', 'victorian', 'century'],
+};
+
+const scoreGenreDiscoveryBook = (book: BookData, genre: string) => {
+  const keywords = GENRE_MATCH_KEYWORDS[genre] || [genre.toLowerCase()];
+  const haystack = normalizeText(
+    `${book.genre || ''} ${(book.genres || []).join(' ')} ${book.title || ''} ${book.description || ''}`,
+  );
+
+  let relevance = 0;
+  keywords.forEach((keywordRaw) => {
+    const keyword = normalizeText(keywordRaw);
+    if (!keyword) return;
+    if (haystack.includes(keyword)) relevance += 1;
+  });
+
+  // Popularity tie-breakers.
+  const ratingsCount = book.ratingsCount || 0;
+  const rating = book.rating || 0;
+  return relevance * 10 + Math.log10(ratingsCount + 1) * 4 + rating;
+};
+
+export async function getGenreDiscoveryBooks(genre: string): Promise<BookData[]> {
+  if (!genre || genre === 'All') {
+    const fallback = await getPopularBooks();
+    return fallback.slice(0, 36);
+  }
+
+  const terms = GENRE_DISCOVERY_TERMS[genre] || [genre.toLowerCase()];
+  const queryVariants = Array.from(
+    new Set(
+      terms.flatMap((term) => [
+        `subject:${term}`,
+        `${term} fiction`,
+        `${term} bestseller`,
+      ]),
+    ),
+  );
+
+  const settled = await Promise.allSettled(
+    queryVariants.slice(0, 9).map(async (query) => {
+      const [google, openLibrary] = await Promise.all([
+        fetchGoogleBooks({
+          query,
+          maxResults: 40,
+          orderBy: 'relevance',
+        }).catch(() => [] as GoogleBook[]),
+        fetchOpenLibraryBooks(query, 40).catch(() => [] as GoogleBook[]),
+      ]);
+
+      return [...google, ...openLibrary].map(convertGoogleBookToBookData);
+    }),
+  );
+
+  const deduped = new Map<string, BookData>();
+  settled.forEach((result) => {
+    if (result.status !== 'fulfilled') return;
+    result.value.forEach((book) => {
+      if (!book.title || !book.author) return;
+      const key =
+        normalizeIsbn(book.isbn) ||
+        `${normalizeText(book.title)}::${normalizeText(book.author)}`;
+      const existing = deduped.get(key);
+      if (!existing || scoreGenreDiscoveryBook(book, genre) > scoreGenreDiscoveryBook(existing, genre)) {
+        deduped.set(key, book);
+      }
+    });
+  });
+
+  const ranked = Array.from(deduped.values())
+    .sort((a, b) => scoreGenreDiscoveryBook(b, genre) - scoreGenreDiscoveryBook(a, genre));
+
+  return ranked.slice(0, 36);
+}
+
+function toTitleCase(value?: string) {
+  if (!value) return '';
+  const lower = value.toLowerCase();
+  return lower.replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+interface NytBestSellerEntry {
+  title?: string;
+  author?: string;
+  contributor?: string;
+  book_image?: string;
+  description?: string;
+  primary_isbn13?: string;
+  publisher?: string;
+}
+
+interface NytBestSellerList {
+  list_name?: string;
+  list_name_encoded?: string;
+  display_name?: string;
+  books?: NytBestSellerEntry[];
+}
+
+interface NytOverviewResponse {
+  results?: {
+    lists?: NytBestSellerList[];
+  };
+}
+
+interface NytListsResponse {
+  results?: Array<{
+    list_name?: string;
+    list_name_encoded?: string;
+    display_name?: string;
+  }>;
+}
+
+interface NytListBooksResponse {
+  results?: {
+    books?: NytBestSellerEntry[];
+  };
+}
+
+export interface NytBestSellerListSummary {
+  name: string;
+  encodedName: string;
+  displayName: string;
+}
+
+export interface PopularBooksFeed {
+  books: BookData[];
+  source: 'nyt' | 'live-trending';
+  fetchedAt: string;
+}
+
+function getBookKey(book: { title?: string; author?: string; isbn?: string }) {
+  const normalizedIsbn = (book.isbn || '').replace(/[^0-9x]/gi, '').toLowerCase();
+  if (normalizedIsbn) return `isbn:${normalizedIsbn}`;
+  return `${normalizeText(book.title)}::${normalizeText(book.author)}`;
+}
+
+function getPublishedYear(value?: string) {
+  if (!value) return 0;
+  const match = value.match(/\d{4}/);
+  if (!match) return 0;
+  const year = Number(match[0]);
+  if (!Number.isFinite(year)) return 0;
+  return year;
+}
+
+function scorePopularBook(book: BookData) {
+  const rating = book.rating || 0;
+  const ratingsCount = Math.max(0, book.ratingsCount || 0);
+  const year = getPublishedYear(book.publishedDate);
+  const currentYear = new Date().getFullYear();
+  const recency = year > 0 ? Math.max(0, 6 - (currentYear - year)) : 0;
+
+  // Prioritize books with strong social proof while still rewarding quality and freshness.
+  return Math.log10(ratingsCount + 1) * 30 + rating * 10 + recency;
+}
+
+async function getFallbackPopularBooks(): Promise<BookData[]> {
+  const trendingQueries = [
+    'subject:fiction bestseller',
+    'subject:mystery bestseller',
+    'subject:romance bestseller',
+    'subject:fantasy bestseller',
+    'subject:thriller bestseller',
+    'subject:science fiction bestseller',
+    'new york times best seller fiction',
+    'booktok popular books',
+  ];
+
+  const settled = await Promise.allSettled(
+    trendingQueries.map((query) =>
+      searchBooks({
+        query,
+        maxResults: 20,
+        orderBy: 'relevance',
+      }),
+    ),
+  );
+
+  const deduped = new Map<string, BookData>();
+  settled.forEach((result) => {
+    if (result.status !== 'fulfilled') return;
+    result.value
+      .map(convertGoogleBookToBookData)
+      .forEach((book) => {
+        if (!book.title || !book.author) return;
+        const key = getBookKey(book);
+        if (!key) return;
+        const existing = deduped.get(key);
+        if (!existing || scorePopularBook(book) > scorePopularBook(existing)) {
+          deduped.set(key, book);
+        }
+      });
+  });
+
+  return Array.from(deduped.values())
+    .sort((a, b) => scorePopularBook(b) - scorePopularBook(a))
+    .slice(0, 24);
+}
+
+export async function getPopularBooksFeed(): Promise<PopularBooksFeed> {
+  const fetchedAt = new Date().toISOString();
+  if (!nytBooksApiKey) {
+    const fallback = await getFallbackPopularBooks();
+    return {
+      books: fallback,
+      source: 'live-trending',
+      fetchedAt,
+    };
+  }
+
+  try {
+    const url = new URL('https://api.nytimes.com/svc/books/v3/lists/overview.json');
+    url.searchParams.set('api-key', nytBooksApiKey);
+
+    const response = await fetchWithTimeout(url.toString());
+    if (!response.ok) {
+      throw new Error(`NYT overview request failed (${response.status})`);
+    }
+
+    const payload = (await response.json()) as NytOverviewResponse;
+    const allBooks =
+      payload.results?.lists?.flatMap((list) => list.books || []) || [];
+
+    const deduped = new Map<string, BookData>();
+    allBooks.forEach((book, index) => {
+      const title = toTitleCase(book.title);
+      const author = toTitleCase(book.author || book.contributor || 'Unknown Author');
+      if (!title) return;
+
+      const isbn = book.primary_isbn13 || '';
+      const key = isbn || `${normalizeText(title)}::${normalizeText(author)}::${index}`;
+      if (deduped.has(key)) return;
+
+      deduped.set(key, {
+        id: isbn || `nyt-${index}`,
+        googleBooksId: undefined,
+        title,
+        author,
+        cover: ensureHttps(book.book_image) || openLibraryCoverByIsbn(isbn) || '',
+        description: book.description,
+        isbn,
+      });
+    });
+
+    const nytBooks = Array.from(deduped.values()).slice(0, 24);
+    if (nytBooks.length > 0) {
+      return {
+        books: nytBooks,
+        source: 'nyt',
+        fetchedAt,
+      };
+    }
+
+    const fallback = await getFallbackPopularBooks();
+    return {
+      books: fallback,
+      source: 'live-trending',
+      fetchedAt,
+    };
+  } catch (error) {
+    console.warn('NYT bestseller fetch failed, using trending fallback.', error);
+    const fallback = await getFallbackPopularBooks();
+    return {
+      books: fallback,
+      source: 'live-trending',
+      fetchedAt,
+    };
+  }
+}
+
+export async function getPopularBooks(): Promise<BookData[]> {
+  const feed = await getPopularBooksFeed();
+  return feed.books;
+}
+
+export async function getNytBestSellerLists(): Promise<NytBestSellerListSummary[]> {
+  if (!nytBooksApiKey) return [];
+
+  try {
+    const url = new URL('https://api.nytimes.com/svc/books/v3/lists/names.json');
+    url.searchParams.set('api-key', nytBooksApiKey);
+    const response = await fetchWithTimeout(url.toString());
+    if (!response.ok) {
+      throw new Error(`NYT lists names request failed (${response.status})`);
+    }
+
+    const payload = (await response.json()) as NytListsResponse;
+    const lists = payload.results || [];
+
+    return lists
+      .filter((list) => list.list_name_encoded && list.list_name)
+      .map((list) => ({
+        name: list.list_name || '',
+        encodedName: list.list_name_encoded || '',
+        displayName: list.display_name || list.list_name || '',
+      }))
+      .slice(0, 40);
+  } catch (error) {
+    console.warn('Failed to fetch NYT bestseller list names', error);
+    return [];
+  }
+}
+
+export async function getNytBestSellerBooks(listEncodedName: string): Promise<BookData[]> {
+  if (!nytBooksApiKey || !listEncodedName) return [];
+
+  try {
+    const url = new URL(`https://api.nytimes.com/svc/books/v3/lists/current/${listEncodedName}.json`);
+    url.searchParams.set('api-key', nytBooksApiKey);
+    const response = await fetchWithTimeout(url.toString());
+    if (!response.ok) {
+      throw new Error(`NYT list books request failed (${response.status})`);
+    }
+
+    const payload = (await response.json()) as NytListBooksResponse;
+    const books = payload.results?.books || [];
+    const deduped = new Map<string, BookData>();
+
+    books.forEach((book, index) => {
+      const title = toTitleCase(book.title);
+      const author = toTitleCase(book.author || book.contributor || 'Unknown Author');
+      if (!title) return;
+
+      const isbn = book.primary_isbn13 || '';
+      const key = isbn || `${normalizeText(title)}::${normalizeText(author)}::${index}`;
+      if (deduped.has(key)) return;
+
+      deduped.set(key, {
+        id: isbn || `nyt-list-${listEncodedName}-${index}`,
+        title,
+        author,
+        cover: ensureHttps(book.book_image) || openLibraryCoverByIsbn(isbn) || '',
+        description: book.description,
+        isbn,
+      });
+    });
+
+    return Array.from(deduped.values()).slice(0, 24);
+  } catch (error) {
+    console.warn('Failed to fetch NYT bestseller list books', error);
+    return [];
+  }
 }
 
 export async function getBookByISBN(isbn: string): Promise<GoogleBook | null> {
