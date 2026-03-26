@@ -1,5 +1,5 @@
-import { useState, useMemo, useEffect } from 'react';
-import { ChevronLeft, BookOpen, CheckCircle2, Plus, X, Search, Filter, TrendingUp, Calendar, Sparkles, Clock, Library, Star } from 'lucide-react';
+import { useState, useMemo, useEffect, useRef } from 'react';
+import { ChevronLeft, BookOpen, CheckCircle2, Plus, X, Search, Filter, TrendingUp, Calendar, Sparkles, Clock, Library, Star, Share2, Download } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 import { useBooks } from '../contexts/BooksContext';
 import { useAuthors } from '../contexts/AuthorContext';
@@ -37,6 +37,37 @@ export function AuthorDetailView({ authorName, onClose, onAddBook }: AuthorDetai
   const [tempFinishYear, setTempFinishYear] = useState('');
   const [tempFinishMonth, setTempFinishMonth] = useState('');
   const [tempFinishDay, setTempFinishDay] = useState('');
+  const [hiddenBookKeys, setHiddenBookKeys] = useState<string[]>([]);
+  const [isSharingChecklist, setIsSharingChecklist] = useState(false);
+  const [isChecklistView, setIsChecklistView] = useState(false);
+  const [checklistTheme, setChecklistTheme] = useState<'minimal' | 'bold' | 'vintage'>('bold');
+  const checklistRef = useRef<HTMLDivElement>(null);
+
+  const HIDDEN_BOOKS_STORAGE_KEY = 'readtrack_author_hidden_books';
+  const buildHiddenKey = (book: AuthorBook) =>
+    `${authorName.toLowerCase()}::${(book.googleBooksId || `${book.title}::${book.author}`).toLowerCase()}`;
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(HIDDEN_BOOKS_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      if (Array.isArray(parsed)) {
+        setHiddenBookKeys(parsed);
+      }
+    } catch {
+      setHiddenBookKeys([]);
+    }
+  }, []);
+
+  const hideBookFromList = (book: AuthorBook) => {
+    const key = buildHiddenKey(book);
+    setHiddenBookKeys((prev) => {
+      if (prev.includes(key)) return prev;
+      const next = [...prev, key];
+      localStorage.setItem(HIDDEN_BOOKS_STORAGE_KEY, JSON.stringify(next));
+      return next;
+    });
+  };
 
   const authorData = getAuthorByName(authorName);
 
@@ -103,8 +134,8 @@ export function AuthorDetailView({ authorName, onClose, onAddBook }: AuthorDetai
       }
     });
 
-    return filtered;
-  }, [authorData, searchQuery, filterStatus, sortBy]);
+    return filtered.filter((book) => !hiddenBookKeys.includes(buildHiddenKey(book)));
+  }, [authorData, searchQuery, filterStatus, sortBy, hiddenBookKeys]);
 
   // Count books by status
   const statusCounts = useMemo(() => {
@@ -146,6 +177,101 @@ export function AuthorDetailView({ authorName, onClose, onAddBook }: AuthorDetai
       booksRead: data.booksRead,
     }));
   }, [authorData]);
+
+  const checklistBooks = useMemo(() => {
+    if (!authorData) return [];
+    return [...authorData.books]
+      .filter((book) => !hiddenBookKeys.includes(buildHiddenKey(book)))
+      .sort((a, b) => a.title.localeCompare(b.title));
+  }, [authorData, hiddenBookKeys]);
+
+  const checklistReadCount = checklistBooks.filter((book) => book.status === 'finished').length;
+
+  const checklistThemeStyles = {
+    minimal: {
+      outerBg: 'linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%)',
+      borderColor: '#d7dee8',
+      overlay: 'linear-gradient(rgba(148,163,184,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,0.04) 1px, transparent 1px)',
+      coverBorder: '#cbd5e1',
+      readColor: '#10b981',
+      unreadColor: '#94a3b8',
+    },
+    bold: {
+      outerBg: 'radial-gradient(circle at 12% 14%, rgba(56,189,248,0.20) 0%, rgba(56,189,248,0.02) 34%), radial-gradient(circle at 88% 10%, rgba(167,139,250,0.22) 0%, rgba(167,139,250,0.02) 36%), linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%)',
+      borderColor: '#d7dee8',
+      overlay: 'linear-gradient(rgba(148,163,184,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,0.06) 1px, transparent 1px)',
+      coverBorder: '#cbd5e1',
+      readColor: '#10b981',
+      unreadColor: '#94a3b8',
+    },
+    vintage: {
+      outerBg: 'radial-gradient(circle at 10% 8%, rgba(245,158,11,0.12) 0%, rgba(245,158,11,0.02) 36%), radial-gradient(circle at 88% 85%, rgba(217,119,6,0.10) 0%, rgba(217,119,6,0.02) 34%), linear-gradient(180deg, #f8f2e7 0%, #efe4d1 100%)',
+      borderColor: '#d4bfa1',
+      overlay: 'linear-gradient(rgba(120,53,15,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(120,53,15,0.06) 1px, transparent 1px)',
+      coverBorder: '#d6c2a7',
+      readColor: '#b45309',
+      unreadColor: '#a8a29e',
+    },
+  } as const;
+
+  const activeChecklistTheme = checklistThemeStyles[checklistTheme];
+
+  const captureChecklistCanvas = async () => {
+    if (!checklistRef.current) return null;
+    const html2canvas = (await import('html2canvas')).default;
+    return html2canvas(checklistRef.current, {
+      backgroundColor: '#f3f4f6',
+      scale: 2,
+      allowTaint: true,
+      useCORS: false,
+      logging: false,
+    });
+  };
+
+  const handleDownloadChecklist = async () => {
+    try {
+      const canvas = await captureChecklistCanvas();
+      if (!canvas) return;
+      const link = document.createElement('a');
+      link.download = `${authorData?.name || 'Author'}-checklist.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    } catch (error) {
+      console.error('Error downloading author checklist:', error);
+    }
+  };
+
+  const handleShareChecklist = async () => {
+    if (isSharingChecklist) return;
+    setIsSharingChecklist(true);
+    try {
+      const canvas = await captureChecklistCanvas();
+      if (!canvas) return;
+      canvas.toBlob(async (blob) => {
+        if (!blob) return;
+        const file = new File([blob], `${authorData?.name || 'Author'}-checklist.png`, { type: 'image/png' });
+        try {
+          if (navigator.share && navigator.canShare?.({ files: [file] })) {
+            await navigator.share({
+              files: [file],
+              title: `${authorData?.name} Checklist`,
+              text: `I’ve read ${checklistReadCount}/${checklistBooks.length} books by ${authorData?.name}!`,
+            });
+          } else {
+            await handleDownloadChecklist();
+          }
+        } catch (shareError) {
+          console.error('Error sharing author checklist:', shareError);
+          await handleDownloadChecklist();
+        } finally {
+          setIsSharingChecklist(false);
+        }
+      }, 'image/png');
+    } catch (error) {
+      console.error('Error preparing checklist share:', error);
+      setIsSharingChecklist(false);
+    }
+  };
 
   const handleOpenShelfSelector = async (book: AuthorBook) => {
     // Show modal immediately
@@ -223,11 +349,13 @@ export function AuthorDetailView({ authorName, onClose, onAddBook }: AuthorDetai
     setBookToMarkAsRead(book);
     setRating(0);
     setFinishDate('');
-    // Set today's date as default
-    const today = new Date();
-    setTempFinishYear(today.getFullYear().toString());
-    setTempFinishMonth((today.getMonth() + 1).toString());
-    setTempFinishDay(today.getDate().toString());
+    // Keep date fields blank so users can enter what they actually remember.
+    setTempStartYear('');
+    setTempStartMonth('');
+    setTempStartDay('');
+    setTempFinishYear('');
+    setTempFinishMonth('');
+    setTempFinishDay('');
     setShowMarkAsReadModal(true);
   };
 
@@ -338,6 +466,229 @@ export function AuthorDetailView({ authorName, onClose, onAddBook }: AuthorDetai
   const completionPercentage = authorData.totalBooks > 0
     ? Math.round((authorData.booksRead / authorData.totalBooks) * 100)
     : 0;
+
+  if (isChecklistView) {
+    return (
+      <div className="fixed inset-0 z-50 overflow-y-auto" style={{ backgroundColor: currentTheme.backgroundColor }}>
+        <div className="sticky top-0 z-10 border-b" style={{ backgroundColor: currentTheme.backgroundColor, borderColor: currentTheme.borderColor }}>
+          <div className="flex items-center justify-between p-4">
+            <button
+              onClick={() => setIsChecklistView(false)}
+              className="p-2 rounded-xl transition-colors"
+              style={{ color: currentTheme.textColor === 'light' ? '#d1d5db' : '#374151' }}
+            >
+              <ChevronLeft className="w-6 h-6" />
+            </button>
+            <h2
+              className="text-lg font-bold flex-1 text-center"
+              style={{ color: currentTheme.textColor === 'light' ? '#f3f4f6' : '#111827' }}
+            >
+              Author Checklist
+            </h2>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={handleShareChecklist}
+                disabled={isSharingChecklist}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all active:scale-95"
+                style={{
+                  backgroundColor: currentTheme.textColor === 'light' ? 'rgba(255,255,255,0.08)' : '#f3f4f6',
+                  color: currentTheme.textColor === 'light' ? '#e5e7eb' : '#374151',
+                  opacity: isSharingChecklist ? 0.7 : 1,
+                }}
+              >
+                <Share2 className="w-3.5 h-3.5" />
+                Share
+              </button>
+              <button
+                onClick={handleDownloadChecklist}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all active:scale-95"
+                style={{
+                  background: getGradientBg(),
+                  color: '#ffffff',
+                }}
+              >
+                <Download className="w-3.5 h-3.5" />
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="px-4 pt-4 pb-24">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <span
+              className="text-[11px] font-semibold uppercase tracking-wider"
+              style={{ color: currentTheme.textColor === 'light' ? '#9ca3af' : '#6b7280' }}
+            >
+              Checklist Style
+            </span>
+            <div className="flex gap-1.5">
+              {([
+                { key: 'minimal', label: 'Minimal' },
+                { key: 'bold', label: 'Bold' },
+                { key: 'vintage', label: 'Vintage' },
+              ] as const).map((themeOption) => (
+                <button
+                  key={themeOption.key}
+                  onClick={() => setChecklistTheme(themeOption.key)}
+                  className="px-2.5 py-1 rounded-full text-[10px] font-semibold transition-all"
+                  style={{
+                    background:
+                      checklistTheme === themeOption.key
+                        ? getGradientBg()
+                        : (currentTheme.textColor === 'light' ? 'rgba(255,255,255,0.08)' : '#f3f4f6'),
+                    color:
+                      checklistTheme === themeOption.key
+                        ? '#ffffff'
+                        : (currentTheme.textColor === 'light' ? '#d1d5db' : '#4b5563'),
+                  }}
+                >
+                  {themeOption.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.2 }}
+            className="rounded-3xl border overflow-hidden shadow-xl"
+            style={{ borderColor: currentTheme.borderColor, backgroundColor: currentTheme.cardColor }}
+          >
+            <div
+              className="px-4 py-3.5 border-b"
+              style={{
+                borderColor: currentTheme.borderColor,
+                background: currentTheme.isGradient
+                  ? `linear-gradient(135deg, ${currentTheme.primary}22 0%, ${currentTheme.secondary}22 100%)`
+                  : currentTheme.cardColor,
+              }}
+            >
+              <div className="flex items-end justify-between gap-3">
+                <div>
+                  <h3
+                    className="text-sm font-black tracking-[0.08em]"
+                    style={{ color: currentTheme.textColor === 'light' ? '#f3f4f6' : '#111827' }}
+                  >
+                    AUTHOR CHECKLIST
+                  </h3>
+                  <p
+                    className="text-[11px] mt-0.5"
+                    style={{ color: currentTheme.textColor === 'light' ? '#9ca3af' : '#6b7280' }}
+                  >
+                    {authorData.name}
+                  </p>
+                </div>
+                <div
+                  className="px-2.5 py-1 rounded-full text-[10px] font-bold"
+                  style={{
+                    backgroundColor: currentTheme.textColor === 'light' ? 'rgba(255,255,255,0.1)' : '#e5e7eb',
+                    color: currentTheme.textColor === 'light' ? '#e5e7eb' : '#374151',
+                  }}
+                >
+                  {checklistReadCount}/{checklistBooks.length} COMPLETE
+                </div>
+              </div>
+            </div>
+
+            <div
+              className="p-3.5"
+              style={{
+                backgroundColor: currentTheme.textColor === 'light' ? '#111827' : '#f8fafc',
+              }}
+            >
+              <div
+                ref={checklistRef}
+                className="relative overflow-hidden rounded-[22px] p-4 border"
+                style={{
+                  background: activeChecklistTheme.outerBg,
+                  borderColor: activeChecklistTheme.borderColor,
+                  boxShadow:
+                    '0 14px 28px rgba(15,23,42,0.12), inset 0 1px 0 rgba(255,255,255,0.95)',
+                }}
+              >
+                <div
+                  className="absolute inset-0 pointer-events-none"
+                  style={{
+                    backgroundImage: activeChecklistTheme.overlay,
+                    backgroundSize: '22px 22px',
+                    maskImage: 'linear-gradient(to bottom, rgba(0,0,0,0.35), rgba(0,0,0,0.08))',
+                  }}
+                />
+                <div className="mb-4 flex items-end justify-between gap-3">
+                  <div>
+                    <h4 className="text-[24px] font-black text-slate-900 leading-tight tracking-tight">
+                      {authorData.name}
+                    </h4>
+                    <p className="text-[18px] font-semibold text-slate-700 leading-tight">
+                      Checklist
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-[22px] font-black text-emerald-600 leading-none">
+                      {checklistReadCount}
+                    </div>
+                    <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
+                      Read
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mb-3.5 h-px bg-slate-300/80" />
+
+                <div className="grid grid-cols-4 gap-2.5">
+                  {checklistBooks.map((book, index) => {
+                    const isRead = book.status === 'finished';
+                    return (
+                      <div key={`${book.googleBooksId || book.title}-${index}`} className="flex flex-col items-center">
+                        <div
+                          className="w-full aspect-[2/3] rounded-xl overflow-hidden border bg-white shadow-md"
+                          style={{ borderColor: activeChecklistTheme.coverBorder }}
+                        >
+                          {book.cover ? (
+                            <BookCover src={book.cover} alt={book.title} className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center bg-slate-200">
+                              <BookOpen className="w-7 h-7 text-slate-400" />
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="mt-1.5 flex items-center justify-center gap-1.5">
+                          <div
+                            className="w-5 h-5 rounded-md border-2 flex items-center justify-center"
+                            style={{
+                              borderColor: isRead ? activeChecklistTheme.readColor : activeChecklistTheme.unreadColor,
+                              backgroundColor: isRead ? activeChecklistTheme.readColor : '#ffffff',
+                            }}
+                          >
+                            {isRead && <CheckCircle2 className="w-3.5 h-3.5 text-white" />}
+                          </div>
+                          {isRead && (
+                            <span
+                              className="text-[9px] font-bold tracking-wide uppercase"
+                              style={{ color: activeChecklistTheme.readColor }}
+                            >
+                              Read
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="mt-3.5 text-center text-[10px] font-medium text-slate-500">
+                  Check off every title as you finish it
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto" style={{ backgroundColor: currentTheme.backgroundColor }}>
@@ -478,6 +829,45 @@ export function AuthorDetailView({ authorName, onClose, onAddBook }: AuthorDetai
 
       {/* Books List - Mobile Optimized */}
       <div className="px-4 pb-24 space-y-3">
+        {checklistBooks.length > 0 && (
+          <button
+            onClick={() => setIsChecklistView(true)}
+            className="w-full rounded-2xl border p-3 text-left transition-all active:scale-[0.99]"
+            style={{
+              borderColor: currentTheme.borderColor,
+              backgroundColor: currentTheme.cardColor,
+              boxShadow: currentTheme.textColor === 'light' ? '0 12px 28px rgba(0,0,0,0.28)' : '0 10px 24px rgba(17,24,39,0.08)',
+            }}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <div
+                  className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+                  style={{
+                    background: getGradientBg(),
+                  }}
+                >
+                  <CheckCircle2 className="w-5 h-5 text-white" />
+                </div>
+                <div className="min-w-0">
+                  <div
+                    className="text-[13px] font-extrabold leading-tight"
+                    style={{ color: currentTheme.textColor === 'light' ? '#f3f4f6' : '#111827' }}
+                  >
+                    View Author Checklist
+                  </div>
+                  <div
+                    className="text-[11px] mt-0.5"
+                    style={{ color: currentTheme.textColor === 'light' ? '#9ca3af' : '#6b7280' }}
+                  >
+                    Share-ready graphic • {checklistReadCount}/{checklistBooks.length} complete
+                  </div>
+                </div>
+              </div>
+            </div>
+          </button>
+        )}
+
         {filteredBooks.map((book, index) => {
           // Determine status for visual indicators
           const isRead = book.status === 'finished';
@@ -580,6 +970,7 @@ export function AuthorDetailView({ authorName, onClose, onAddBook }: AuthorDetai
                         </>
                       )}
                     </div>
+
                   </div>
 
                   {/* Status Indicator / Action Button */}
@@ -667,19 +1058,31 @@ export function AuthorDetailView({ authorName, onClose, onAddBook }: AuthorDetai
                   </div>
                 </div>
                 
-                {/* In Library Badge - Far Right */}
-                {isInLibrary && (
-                  <div 
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg self-start"
+                {/* Right rail actions */}
+                <div className="ml-2 self-stretch flex flex-col items-end justify-between">
+                  {isInLibrary && (
+                    <div 
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg"
+                      style={{
+                        backgroundColor: currentTheme.accentColor + '15',
+                        color: currentTheme.accentColor,
+                      }}
+                    >
+                      <BookOpen className="w-3.5 h-3.5" />
+                      <span className="text-xs font-semibold">In Library</span>
+                    </div>
+                  )}
+
+                  <button
+                    onClick={() => hideBookFromList(book)}
+                    className="text-[8px] uppercase whitespace-nowrap leading-none underline underline-offset-2"
                     style={{
-                      backgroundColor: currentTheme.accentColor + '15',
-                      color: currentTheme.accentColor,
+                      color: currentTheme.textColor === 'light' ? '#9ca3af' : '#6b7280',
                     }}
                   >
-                    <BookOpen className="w-3.5 h-3.5" />
-                    <span className="text-xs font-semibold">In Library</span>
-                  </div>
-                )}
+                    Remove from list
+                  </button>
+                </div>
               </div>
             </motion.div>
           );
@@ -878,6 +1281,12 @@ export function AuthorDetailView({ authorName, onClose, onAddBook }: AuthorDetai
                     >
                       When Did You Start?
                     </label>
+                    <p
+                      className="text-[11px] mb-2"
+                      style={{ color: currentTheme.textColor === 'light' ? '#9ca3af' : '#6b7280' }}
+                    >
+                      Enter what you remember. Year-only or month/year is totally fine.
+                    </p>
                     <div className="grid grid-cols-3 gap-2">
                       <input
                         type="number"
@@ -938,6 +1347,12 @@ export function AuthorDetailView({ authorName, onClose, onAddBook }: AuthorDetai
                     >
                       When Did You Finish?
                     </label>
+                    <p
+                      className="text-[11px] mb-2"
+                      style={{ color: currentTheme.textColor === 'light' ? '#9ca3af' : '#6b7280' }}
+                    >
+                      Only fill the parts you know. You can leave unknown fields blank.
+                    </p>
                     <div className="grid grid-cols-3 gap-2">
                       <input
                         type="number"

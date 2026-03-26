@@ -1,11 +1,10 @@
-import { User, CheckCircle2, TrendingUp, BookOpen, ChevronDown, ChevronUp, Circle, Search, RefreshCw, Sparkles, ArrowRight, Book, Key, ExternalLink, AlertCircle } from 'lucide-react';
-import { useState, useMemo, useEffect } from 'react';
+import { User, CheckCircle2, TrendingUp, BookOpen, ChevronDown, ChevronUp, Circle, Search, RefreshCw, Sparkles, ArrowRight, Book } from 'lucide-react';
+import { useState, useMemo } from 'react';
 import { useTheme } from '../contexts/ThemeContext';
 import { useBooks } from '../contexts/BooksContext';
 import { useAuthors } from '../contexts/AuthorContext';
 import { AuthorDetailView } from './AuthorDetailView';
 import { motion, AnimatePresence } from 'motion/react';
-import { hasApiKey, setGoogleBooksApiKey, getGoogleBooksApiKey, clearGoogleBooksApiKey } from '../utils/authorDatabase';
 
 export function AuthorTracker() {
   const { currentTheme } = useTheme();
@@ -17,46 +16,6 @@ export function AuthorTracker() {
   const [selectedAuthor, setSelectedAuthor] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<'books-read' | 'total-books' | 'name'>('books-read');
-  
-  // API Key state management - safe initialization
-  const [showApiKeySetup, setShowApiKeySetup] = useState(false);
-  const [apiKeyInput, setApiKeyInput] = useState('');
-  const [apiKeyError, setApiKeyError] = useState('');
-  
-  // Initialize API key state after mount
-  useEffect(() => {
-    const hasKey = hasApiKey();
-    setShowApiKeySetup(!hasKey);
-    setApiKeyInput(getGoogleBooksApiKey() || '');
-  }, []);
-
-  const handleSaveApiKey = () => {
-    if (!apiKeyInput.trim()) {
-      setApiKeyError('Please enter an API key');
-      return;
-    }
-    
-    if (apiKeyInput.length < 20) {
-      setApiKeyError('API key seems too short. Please check it.');
-      return;
-    }
-    
-    setGoogleBooksApiKey(apiKeyInput.trim());
-    setShowApiKeySetup(false);
-    setApiKeyError('');
-  };
-
-  const handleSkipApiKey = () => {
-    // Set a dummy value to indicate user chose to skip
-    setGoogleBooksApiKey('SKIP');
-    setShowApiKeySetup(false);
-  };
-
-  const handleClearApiKey = () => {
-    clearGoogleBooksApiKey();
-    setApiKeyInput('');
-    setShowApiKeySetup(true);
-  };
 
   // Extract basic author stats from books in library (fallback when no author data loaded)
   const basicAuthorStats = useMemo(() => {
@@ -190,57 +149,6 @@ export function AuthorTracker() {
           </h2>
         </div>
 
-        {/* CACHE WARNING - ULTRA PROMINENT */}
-        <div className="mb-6 p-6 bg-gradient-to-r from-red-600 to-red-500 border-4 border-red-400 rounded-2xl shadow-2xl animate-pulse">
-          <div className="text-white font-black text-2xl mb-3 flex items-center gap-3">
-            <AlertCircle className="w-8 h-8" />
-            🚨 OLD CACHED CODE RUNNING!
-          </div>
-          <div className="text-white text-base mb-4 leading-relaxed">
-            Your browser is running <span className="font-bold bg-black/30 px-2 py-1 rounded">OLD VERSION</span> of the code!
-            <br />
-            <span className="text-yellow-300 font-bold">Look at your console:</span> If you DON'T see a giant green banner saying "VERSION 4.0.1-CACHE-BUST", you're on the old code.
-          </div>
-          <div className="bg-black/30 p-4 rounded-lg mb-4 text-white/90 text-sm font-mono">
-            ❌ OLD CODE: "Retrying in 4000ms... attempt 1/3"
-            <br />
-            ✅ NEW CODE: "Retrying in 60000ms... attempt 1/6" + "[VERSION 4.0]"
-          </div>
-          <button
-            onClick={() => {
-              if (confirm('🔥 NUCLEAR CACHE CLEAR\n\nThis will:\n1. Clear ALL browser storage\n2. Unregister service workers\n3. Force hard reload\n\nYour books/themes will be preserved!\n\nContinue?')) {
-                // Save critical data
-                const booksData = localStorage.getItem('readtrack_books');
-                const themesData = localStorage.getItem('readtrack_themes');
-                const currentTheme = localStorage.getItem('readtrack_current_theme');
-                
-                // Nuclear clear
-                localStorage.clear();
-                sessionStorage.clear();
-                
-                // Restore critical data
-                if (booksData) localStorage.setItem('readtrack_books', booksData);
-                if (themesData) localStorage.setItem('readtrack_themes', themesData);
-                if (currentTheme) localStorage.setItem('readtrack_current_theme', currentTheme);
-                
-                // Clear service workers
-                navigator.serviceWorker?.getRegistrations().then(registrations => {
-                  registrations.forEach(reg => reg.unregister());
-                });
-                
-                // Hard reload
-                window.location.href = window.location.href + '?cachebust=' + Date.now();
-              }
-            }}
-            className="w-full px-6 py-4 bg-yellow-400 hover:bg-yellow-300 text-black font-black text-xl rounded-xl shadow-lg transform hover:scale-105 transition-all"
-          >
-            🔥 NUCLEAR CACHE CLEAR + RELOAD 🔥
-          </button>
-          <div className="text-white/90 text-sm mt-4 bg-black/20 p-3 rounded">
-            <span className="font-bold">Alternative:</span> Press <kbd className="bg-black/40 px-2 py-1 rounded font-mono">Ctrl+Shift+R</kbd> (Windows) or <kbd className="bg-black/40 px-2 py-1 rounded font-mono">Cmd+Shift+R</kbd> (Mac) to hard refresh
-          </div>
-        </div>
-
         <div className="text-center py-8">
           <div className="animate-spin rounded-full h-16 w-16 border-4 border-white/30 border-t-white mx-auto mb-4"></div>
           <div className="text-white/90 text-lg">
@@ -289,97 +197,6 @@ export function AuthorTracker() {
 
   return (
     <div className="space-y-6">
-      {/* API Key Setup Banner - Show at top if not configured */}
-      <AnimatePresence>
-        {showApiKeySetup && (
-          <motion.div
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            className="p-6 rounded-xl border-2"
-            style={{
-              backgroundColor: currentTheme.cardColor,
-              borderColor: currentTheme.accentColor,
-            }}
-          >
-            <div className="text-center max-w-md mx-auto">
-              <h3 className="text-lg font-bold mb-2" style={{ color: currentTheme.textColor === 'light' ? '#ffffff' : '#111827' }}>
-                🚀 Boost Author Data Loading
-              </h3>
-              <p className="text-sm mb-4 leading-relaxed" style={{ color: currentTheme.textColor === 'light' ? '#d1d5db' : '#4b5563' }}>
-                Add your <strong style={{ color: currentTheme.accentColor }}>free</strong> Google Books API key to eliminate rate limits and load author data <strong>instantly</strong>. Without it, loading may take 1-2 hours due to strict rate limiting.
-              </p>
-              
-              <div className="space-y-3">
-                {/* Input Field - Full Width */}
-                <input
-                  type="text"
-                  value={apiKeyInput}
-                  onChange={(e) => setApiKeyInput(e.target.value)}
-                  placeholder="Paste your API key here..."
-                  className="w-full px-4 py-3 rounded-xl border-2 text-sm focus:outline-none focus:ring-2 transition-all"
-                  style={{
-                    backgroundColor: currentTheme.textColor === 'light' ? '#1f2937' : '#ffffff',
-                    borderColor: currentTheme.borderColor,
-                    color: currentTheme.textColor === 'light' ? '#ffffff' : '#111827',
-                  }}
-                  onFocus={(e) => {
-                    e.target.style.borderColor = currentTheme.accentColor;
-                  }}
-                  onBlur={(e) => {
-                    e.target.style.borderColor = currentTheme.borderColor;
-                  }}
-                />
-                
-                {/* Save Button - Full Width */}
-                <button
-                  onClick={handleSaveApiKey}
-                  className="w-full py-3 rounded-xl font-bold text-sm text-white shadow-lg hover:shadow-xl transition-all active:scale-95"
-                  style={{ background: getGradientBg() }}
-                >
-                  Save Key
-                </button>
-                
-                {/* Error Message */}
-                {apiKeyError && (
-                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/30">
-                    <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
-                    <span className="text-xs text-red-500">{apiKeyError}</span>
-                  </div>
-                )}
-                
-                {/* Action Buttons - Stacked on Mobile */}
-                <div className="grid grid-cols-1 gap-2">
-                  <a
-                    href="https://console.cloud.google.com/apis/credentials"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-semibold text-sm transition-all active:scale-95"
-                    style={{ 
-                      backgroundColor: `${currentTheme.accentColor}20`,
-                      color: currentTheme.accentColor,
-                    }}
-                  >
-                    <ExternalLink className="w-4 h-4 flex-shrink-0" />
-                    <span>Get Free API Key (2 min setup)</span>
-                  </a>
-                  <button
-                    onClick={handleSkipApiKey}
-                    className="flex items-center justify-center px-4 py-3 rounded-xl font-medium text-sm transition-all active:scale-95"
-                    style={{ 
-                      backgroundColor: currentTheme.textColor === 'light' ? '#374151' : '#e5e7eb',
-                      color: currentTheme.textColor === 'light' ? '#d1d5db' : '#6b7280',
-                    }}
-                  >
-                    Skip (use slow mode)
-                  </button>
-                </div>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       {/* Sync Progress Banner */}
       <AnimatePresence>
         {isSyncing && syncProgress && (
@@ -516,19 +333,6 @@ export function AuthorTracker() {
               }}
             />
           </div>
-          {hasApiKey() && getGoogleBooksApiKey() !== 'SKIP' && (
-            <button
-              onClick={() => setShowApiKeySetup(true)}
-              className="p-2.5 rounded-xl border transition-all"
-              style={{
-                backgroundColor: currentTheme.cardColor,
-                borderColor: currentTheme.borderColor,
-              }}
-              title="API Key Settings"
-            >
-              <Key className="w-5 h-5" style={{ color: currentTheme.accentColor }} />
-            </button>
-          )}
           <button
             onClick={refreshAllAuthors}
             disabled={isSyncing}
