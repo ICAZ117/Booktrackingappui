@@ -117,10 +117,29 @@ const normalizeStatus = (status: Book['status'] | string | undefined): Book['sta
   return status as Book['status'];
 };
 
+const applyFinishedProgressDefaults = (book: Book): Book => {
+  if (book.status !== 'finished') return book;
+
+  const normalized: Book = {
+    ...book,
+    progress: 100,
+  };
+
+  if (typeof book.pages === 'number' && book.pages > 0) {
+    normalized.currentPage = book.pages;
+  }
+
+  if (book.format === 'audiobook' && typeof book.audioDuration === 'number' && book.audioDuration > 0) {
+    normalized.currentMinutes = book.audioDuration;
+  }
+
+  return normalized;
+};
+
 const normalizeBook = (book: Partial<Book>): Book | null => {
   if (!book.id || !book.title) return null;
 
-  return {
+  const normalized: Book = {
     id: String(book.id),
     title: String(book.title),
     author: book.author ? String(book.author) : 'Unknown Author',
@@ -148,6 +167,8 @@ const normalizeBook = (book: Partial<Book>): Book | null => {
     isbn: book.isbn,
     stats: book.stats,
   };
+
+  return applyFinishedProgressDefaults(normalized);
 };
 
 const loadBooksFromStorage = () => {

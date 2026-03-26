@@ -1,6 +1,6 @@
 import { ArrowLeft, Star, Calendar, BookOpen, Clock, Tag, Edit2, Trash2, Share2, Plus, Minus, ChevronDown, ChevronRight, TrendingUp, Award, Heart, Bookmark, BarChart3, Users, Zap, Target, Flame, ThumbsUp, ThumbsDown, MessageCircle, AlertCircle, Check, Smartphone, Headphones } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { BookCover } from './BookCover';
 import { useTheme } from '../contexts/ThemeContext';
 import { useBooks } from '../contexts/BooksContext';
@@ -49,9 +49,16 @@ interface BookDetailPageProps {
   onBookFinished?: (book: any) => void;
 }
 
+type DraftLogEntry = {
+  id: string;
+  date: string;
+  mode: 'amount' | 'percent';
+  value: string;
+};
+
 export function BookDetailPage({ book, onBack, onUpdateBook, onBookFinished }: BookDetailPageProps) {
   const { currentTheme } = useTheme();
-  const { bookshelves, updateBookshelves, addBook, updateBook } = useBooks();
+  const { bookshelves, updateBookshelves, addBook, updateBook, logReadingSession, readingSessions } = useBooks();
   
   // Load custom shelves from localStorage
   const [customShelves, setCustomShelves] = useState<any[]>([]);
@@ -144,6 +151,17 @@ export function BookDetailPage({ book, onBack, onUpdateBook, onBookFinished }: B
   const [tempFinishYear, setTempFinishYear] = useState('');
   const [tempFinishMonth, setTempFinishMonth] = useState('');
   const [tempFinishDay, setTempFinishDay] = useState('');
+  const [tempLogEntries, setTempLogEntries] = useState<DraftLogEntry[]>([]);
+  const [tempReview, setTempReview] = useState(book.notes || '');
+  const [tempReviewRating, setTempReviewRating] = useState(book.rating || 0);
+
+  const readingLogsForBook = useMemo(() => {
+    if (!book.id) return [];
+    return readingSessions
+      .filter((session) => session.bookId === book.id)
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .slice(0, 8);
+  }, [readingSessions, book.id]);
 
   // Sync dates with book prop
   useEffect(() => {
@@ -154,6 +172,77 @@ export function BookDetailPage({ book, onBack, onUpdateBook, onBookFinished }: B
       setFinishDate(book.finishDate);
     }
   }, [book.startDate, book.finishDate]);
+
+  const parseDateParts = (raw?: string) => {
+    const value = (raw || '').trim();
+    if (!value) return { year: '', month: '', day: '' };
+
+    // YYYY-MM-DD or YYYY/MM/DD
+    let match = value.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+    if (match) {
+      return {
+        year: match[1],
+        month: String(Number(match[2])),
+        day: String(Number(match[3])),
+      };
+    }
+
+    // Year only
+    match = value.match(/^(\d{4})$/);
+    if (match) {
+      return { year: match[1], month: '', day: '' };
+    }
+
+    // Month-name formats like "Mar 26, 2026" / "March 26 2026" / "Mar, 2026"
+    match = value.match(/^([A-Za-z]+)\s*(\d{1,2})?,?\s*(\d{4})$/);
+    if (match) {
+      const monthToken = match[1].slice(0, 3).toLowerCase();
+      const monthOrder = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+      const monthIndex = monthOrder.indexOf(monthToken);
+      return {
+        year: match[3] || '',
+        month: monthIndex >= 0 ? String(monthIndex + 1) : '',
+        day: match[2] ? String(Number(match[2])) : '',
+      };
+    }
+
+    // Last fallback with Date parser
+    const fallback = new Date(value);
+    if (!Number.isNaN(fallback.getTime())) {
+      return {
+        year: String(fallback.getFullYear()),
+        month: String(fallback.getMonth() + 1),
+        day: String(fallback.getDate()),
+      };
+    }
+
+    return { year: '', month: '', day: '' };
+  };
+
+  const openReadingLogEditor = () => {
+    const startParts = parseDateParts(startDate || book.startDate || '');
+    const finishParts = parseDateParts(finishDate || book.finishDate || book.dateRead || '');
+
+    setTempStartYear(startParts.year);
+    setTempStartMonth(startParts.month);
+    setTempStartDay(startParts.day);
+
+    setTempFinishYear(finishParts.year);
+    setTempFinishMonth(finishParts.month);
+    setTempFinishDay(finishParts.day);
+
+    setTempReview(book.notes || '');
+    setTempReviewRating(book.rating || 0);
+    setTempLogEntries([
+      {
+        id: `draft_${Date.now()}`,
+        date: new Date().toISOString().split('T')[0],
+        mode: 'amount',
+        value: '',
+      },
+    ]);
+    setShowDatePicker(true);
+  };
 
   // Sync status with book's actual status
   useEffect(() => {
@@ -780,50 +869,7 @@ export function BookDetailPage({ book, onBack, onUpdateBook, onBookFinished }: B
                 <span className="text-xs text-gray-400">Started</span>
                 <span className="text-xs font-bold text-gray-200">{startDate}</span>
                 <button 
-                  onClick={() => {
-                    // Parse existing dates when opening modal
-                    if (startDate) {
-                      const dateMatch = startDate.match(/(\w+)\s*(\d+)?,?\s*(\d{4})/);
-                      if (dateMatch) {
-                        const [_, month, day, year] = dateMatch;
-                        setTempStartYear(year);
-                        if (month) {
-                          const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-                          const monthIndex = monthNames.indexOf(month);
-                          if (monthIndex !== -1) {
-                            setTempStartMonth(String(monthIndex + 1));
-                          }
-                        }
-                        if (day) {
-                          setTempStartDay(day);
-                        }
-                      } else if (startDate.match(/^\d{4}$/)) {
-                        // Year only
-                        setTempStartYear(startDate);
-                      }
-                    }
-                    if (finishDate) {
-                      const dateMatch = finishDate.match(/(\w+)\s*(\d+)?,?\s*(\d{4})/);
-                      if (dateMatch) {
-                        const [_, month, day, year] = dateMatch;
-                        setTempFinishYear(year);
-                        if (month) {
-                          const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-                          const monthIndex = monthNames.indexOf(month);
-                          if (monthIndex !== -1) {
-                            setTempFinishMonth(String(monthIndex + 1));
-                          }
-                        }
-                        if (day) {
-                          setTempFinishDay(day);
-                        }
-                      } else if (finishDate.match(/^\d{4}$/)) {
-                        // Year only
-                        setTempFinishYear(finishDate);
-                      }
-                    }
-                    setShowDatePicker(true);
-                  }}
+                  onClick={openReadingLogEditor}
                   className="ml-auto p-1 rounded transition-colors"
                   style={{
                     backgroundColor: 'transparent'
@@ -841,6 +887,17 @@ export function BookDetailPage({ book, onBack, onUpdateBook, onBookFinished }: B
                   <Calendar className="w-4 h-4 text-gray-500" />
                   <span className="text-xs text-gray-400">Finished</span>
                   <span className="text-xs font-bold text-gray-200">{finishDate}</span>
+                  {!startDate && (
+                    <button
+                      onClick={openReadingLogEditor}
+                      className="ml-auto p-1 rounded transition-colors"
+                      style={{ backgroundColor: 'transparent' }}
+                      onMouseEnter={(e) => e.currentTarget.style.backgroundColor = currentTheme.textColor === 'light' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)'}
+                      onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                    >
+                      <Edit2 className="w-3.5 h-3.5 text-gray-500" />
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -2075,15 +2132,20 @@ export function BookDetailPage({ book, onBack, onUpdateBook, onBookFinished }: B
               >
 
                 <div className="px-4 pt-4 pb-4">
-                  <h2 className="text-lg font-bold text-white mb-1">Edit Reading Dates</h2>
-                  <p className="text-xs text-gray-400">Track when you started and finished this book</p>
+                  <h2 className="text-lg font-bold text-white mb-1">Reading Log & Review</h2>
+                  <p className="text-xs text-gray-400">Fix past reading days, update dates, and add your review in one place</p>
                 </div>
 
-                <div className="px-4 pb-4 space-y-4 max-h-[50vh] overflow-y-auto">
+                <div className="px-4 pb-4 space-y-5 max-h-[58vh] overflow-y-auto">
                   {/* Start Date Section */}
                   <div>
                     <label className="block text-sm font-semibold text-white mb-2">Start Date</label>
-                    <p className="text-xs text-gray-500 mb-3">Enter what you know (year only, month/year, or full date)</p>
+                    <p className="text-xs text-gray-500 mb-3">Use full date for best calendar accuracy</p>
+                    {(startDate || book.startDate) && (
+                      <div className="text-[11px] text-gray-400 mb-2">
+                        Current: <span className="text-gray-200 font-semibold">{startDate || book.startDate}</span>
+                      </div>
+                    )}
                     <div className="grid grid-cols-3 gap-2">
                       <input
                         type="number"
@@ -2122,6 +2184,11 @@ export function BookDetailPage({ book, onBack, onUpdateBook, onBookFinished }: B
                 <div>
                   <label className="block text-sm font-semibold text-white mb-2">Finish Date</label>
                   <p className="text-xs text-gray-500 mb-3">Leave blank if you haven't finished yet</p>
+                  {(finishDate || book.finishDate) && (
+                    <div className="text-[11px] text-gray-400 mb-2">
+                      Current: <span className="text-gray-200 font-semibold">{finishDate || book.finishDate}</span>
+                    </div>
+                  )}
                   <div className="grid grid-cols-3 gap-2">
                     <input
                       type="number"
@@ -2152,47 +2219,178 @@ export function BookDetailPage({ book, onBack, onUpdateBook, onBookFinished }: B
                     />
                   </div>
                 </div>
+
+                {/* Divider */}
+                <div className="h-px bg-gray-700 my-4" />
+
+                {/* Reading Log Section */}
+                <div>
+                  <label className="block text-sm font-semibold text-white mb-2">Reading Log</label>
+                  <p className="text-xs text-gray-500 mb-3">Add one or multiple missed entries with {book.format === 'audiobook' ? 'minutes' : 'pages'} or percentage</p>
+                  <div className="space-y-2 mb-2">
+                    {tempLogEntries.map((entry, idx) => (
+                      <div key={entry.id} className="rounded-xl bg-[#2f2f2f] p-2.5 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div className="text-[11px] font-semibold text-gray-200">Log #{idx + 1}</div>
+                          {tempLogEntries.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setTempLogEntries((prev) => prev.filter((row) => row.id !== entry.id));
+                              }}
+                              className="text-[10px] px-2 py-0.5 rounded bg-[#3a3a3a] text-gray-300"
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                        <input
+                          type="date"
+                          value={entry.date}
+                          onChange={(e) => {
+                            setTempLogEntries((prev) =>
+                              prev.map((row) => (row.id === entry.id ? { ...row, date: e.target.value } : row)),
+                            );
+                          }}
+                          className="w-full bg-[#3a3a3a] text-white px-3 py-2.5 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#3298ff]"
+                        />
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setTempLogEntries((prev) =>
+                                prev.map((row) => (row.id === entry.id ? { ...row, mode: 'amount' } : row)),
+                              );
+                            }}
+                            className="px-3 py-2 rounded-lg text-xs font-semibold"
+                            style={{
+                              background: entry.mode === 'amount' ? dynamicGradient : '#3a3a3a',
+                              color: '#ffffff',
+                            }}
+                          >
+                            {book.format === 'audiobook' ? 'Minutes' : 'Pages'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setTempLogEntries((prev) =>
+                                prev.map((row) => (row.id === entry.id ? { ...row, mode: 'percent' } : row)),
+                              );
+                            }}
+                            className="px-3 py-2 rounded-lg text-xs font-semibold"
+                            style={{
+                              background: entry.mode === 'percent' ? dynamicGradient : '#3a3a3a',
+                              color: '#ffffff',
+                            }}
+                          >
+                            Percentage
+                          </button>
+                        </div>
+                        <input
+                          type="number"
+                          placeholder={entry.mode === 'percent' ? 'Target % (0-100)' : book.format === 'audiobook' ? 'Minutes listened' : 'Pages read'}
+                          value={entry.value}
+                          onChange={(e) => {
+                            setTempLogEntries((prev) =>
+                              prev.map((row) => (row.id === entry.id ? { ...row, value: e.target.value } : row)),
+                            );
+                          }}
+                          min="0"
+                          max={entry.mode === 'percent' ? '100' : undefined}
+                          className="w-full bg-[#3a3a3a] text-white px-3 py-2.5 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#3298ff] placeholder-gray-600"
+                        />
+                      </div>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTempLogEntries((prev) => [
+                          ...prev,
+                          {
+                            id: `draft_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                            date: new Date().toISOString().split('T')[0],
+                            mode: 'amount',
+                            value: '',
+                          },
+                        ]);
+                      }}
+                      className="w-full bg-[#3a3a3a] text-white px-3 py-2.5 rounded-xl text-xs font-semibold"
+                    >
+                      + Add Another Log
+                    </button>
+                    <div className="bg-[#2f2f2f] text-gray-300 px-3 py-2.5 rounded-xl text-xs text-center">
+                      Every valid row creates a reading session and updates progress in order
+                    </div>
+                  </div>
+
+                  {readingLogsForBook.length > 0 && (
+                    <div className="mt-3">
+                      <div className="text-[11px] text-gray-400 mb-2">Recent log entries</div>
+                      <div className="space-y-1.5">
+                        {readingLogsForBook.map((entry) => (
+                          <div
+                            key={entry.id}
+                            className="flex items-center justify-between text-[11px] px-2.5 py-2 rounded-lg bg-[#2b2b2b]"
+                          >
+                            <span className="text-gray-200">{entry.date.split('T')[0]}</span>
+                            <span className="text-gray-300">
+                              {entry.pages || 0} pages • {entry.minutes || 0} min
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Divider */}
+                <div className="h-px bg-gray-700 my-4" />
+
+                {/* Review Section */}
+                <div>
+                  <label className="block text-sm font-semibold text-white mb-2">Review</label>
+                  <div className="flex gap-1 mb-3">
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <button
+                        key={star}
+                        onClick={() => setTempReviewRating(star)}
+                        className="p-1"
+                        type="button"
+                      >
+                        <Star
+                          className="w-5 h-5"
+                          fill={star <= tempReviewRating ? '#fbbf24' : 'none'}
+                          style={{ color: star <= tempReviewRating ? '#fbbf24' : '#6b7280' }}
+                        />
+                      </button>
+                    ))}
+                  </div>
+                  <textarea
+                    value={tempReview}
+                    onChange={(e) => setTempReview(e.target.value)}
+                    placeholder="Write your notes/review..."
+                    className="w-full bg-[#3a3a3a] text-white px-3 py-2.5 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#3298ff] placeholder-gray-600 min-h-[90px]"
+                  />
+                </div>
               </div>
 
               <div className="px-4 pt-3 pb-4 space-y-2">
                 <button
-                  onClick={() => {
-                    // Build start date string from components
-                    let newStartDate = '';
-                    if (tempStartYear) {
-                      if (tempStartMonth && tempStartDay) {
-                        // Full date
-                        const date = new Date(parseInt(tempStartYear), parseInt(tempStartMonth) - 1, parseInt(tempStartDay));
-                        newStartDate = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-                      } else if (tempStartMonth) {
-                        // Month and year only
-                        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-                        newStartDate = `${monthNames[parseInt(tempStartMonth) - 1]}, ${tempStartYear}`;
-                      } else {
-                        // Year only
-                        newStartDate = tempStartYear;
-                      }
-                    }
+                  onClick={async () => {
+                    const toIsoDate = (yearRaw: string, monthRaw: string, dayRaw: string): string => {
+                      const year = parseInt(yearRaw || '', 10);
+                      if (!year || Number.isNaN(year)) return '';
+                      const month = parseInt(monthRaw || '1', 10);
+                      const day = parseInt(dayRaw || '1', 10);
+                      if (month < 1 || month > 12 || day < 1 || day > 31) return '';
+                      return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                    };
 
-                    // Build finish date string from components
-                    let newFinishDate = '';
-                    if (tempFinishYear) {
-                      if (tempFinishMonth && tempFinishDay) {
-                        // Full date
-                        const date = new Date(parseInt(tempFinishYear), parseInt(tempFinishMonth) - 1, parseInt(tempFinishDay));
-                        newFinishDate = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-                      } else if (tempFinishMonth) {
-                        // Month and year only
-                        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-                        newFinishDate = `${monthNames[parseInt(tempFinishMonth) - 1]}, ${tempFinishYear}`;
-                      } else {
-                        // Year only
-                        newFinishDate = tempFinishYear;
-                      }
-                    }
-
-                    // Update both dates
                     const updates: any = {};
+
+                    const newStartDate = toIsoDate(tempStartYear, tempStartMonth, tempStartDay);
+                    const newFinishDate = toIsoDate(tempFinishYear, tempFinishMonth, tempFinishDay);
+
                     if (newStartDate) {
                       setStartDate(newStartDate);
                       updates.startDate = newStartDate;
@@ -2202,12 +2400,119 @@ export function BookDetailPage({ book, onBack, onUpdateBook, onBookFinished }: B
                       updates.finishDate = newFinishDate;
                     }
 
+                    // Review updates
+                    updates.notes = tempReview;
+                    updates.rating = tempReviewRating || undefined;
+
+                    // Reading logs (optional, multiple rows)
+                    if (book.id) {
+                      const validLogs = tempLogEntries
+                        .map((entry) => ({
+                          ...entry,
+                          numericValue: Math.max(0, parseInt(entry.value || '0', 10) || 0),
+                        }))
+                        .filter((entry) => entry.date && entry.numericValue > 0)
+                        .sort((a, b) => a.date.localeCompare(b.date));
+
+                      let runningPage = currentPage || book.currentPage || 0;
+                      let runningMinutes = currentMinutes || book.currentMinutes || 0;
+                      let runningProgress = percentComplete || book.progress || 0;
+                      const totalPages = book.pages || 0;
+                      const totalMinutes = book.audioDuration || 0;
+
+                      for (const entry of validLogs) {
+                        let sessionPages = 0;
+                        let sessionMinutes = 0;
+
+                        if (entry.mode === 'amount') {
+                          if (book.format === 'audiobook') {
+                            const nextMinutes = totalMinutes > 0
+                              ? Math.min(totalMinutes, runningMinutes + entry.numericValue)
+                              : runningMinutes + entry.numericValue;
+                            sessionMinutes = Math.max(0, nextMinutes - runningMinutes);
+                            runningMinutes = nextMinutes;
+                            if (totalMinutes > 0) {
+                              runningProgress = Math.min(100, Math.round((runningMinutes / totalMinutes) * 100));
+                            }
+                          } else {
+                            const nextPage = totalPages > 0
+                              ? Math.min(totalPages, runningPage + entry.numericValue)
+                              : runningPage + entry.numericValue;
+                            sessionPages = Math.max(0, nextPage - runningPage);
+                            runningPage = nextPage;
+                            if (totalPages > 0) {
+                              runningProgress = Math.min(100, Math.round((runningPage / totalPages) * 100));
+                            }
+                          }
+                        } else {
+                          const targetPercent = Math.min(100, entry.numericValue);
+                          if (book.format === 'audiobook' && totalMinutes > 0) {
+                            const targetMinutes = Math.round((targetPercent / 100) * totalMinutes);
+                            sessionMinutes = Math.max(0, targetMinutes - runningMinutes);
+                            runningMinutes = Math.max(runningMinutes, targetMinutes);
+                            runningProgress = Math.min(100, Math.max(runningProgress, targetPercent));
+                          } else if (totalPages > 0) {
+                            const targetPage = Math.round((targetPercent / 100) * totalPages);
+                            sessionPages = Math.max(0, targetPage - runningPage);
+                            runningPage = Math.max(runningPage, targetPage);
+                            runningProgress = Math.min(100, Math.max(runningProgress, targetPercent));
+                          }
+                        }
+
+                        if (sessionPages > 0 || sessionMinutes > 0) {
+                          await logReadingSession({
+                            id: `session_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+                            bookId: book.id,
+                            pages: sessionPages,
+                            minutes: sessionMinutes,
+                            date: entry.date,
+                          });
+                        }
+                      }
+
+                      if (book.format === 'audiobook') {
+                        updates.currentMinutes = runningMinutes;
+                        if (totalMinutes > 0) updates.progress = runningProgress;
+                        setCurrentMinutes(runningMinutes);
+                      } else {
+                        updates.currentPage = runningPage;
+                        if (totalPages > 0) updates.progress = runningProgress;
+                        setCurrentPage(runningPage);
+                      }
+                      setPercentComplete(updates.progress || runningProgress);
+
+                      if (!updates.startDate && !book.startDate && validLogs.length > 0) {
+                        updates.startDate = validLogs[0].date;
+                        setStartDate(validLogs[0].date);
+                      }
+                    }
+
+                    if ((updates.progress || 0) >= 100 || newFinishDate) {
+                      updates.status = 'finished';
+                      updates.progress = 100;
+                      if (!updates.finishDate) {
+                        updates.finishDate = newFinishDate || new Date().toISOString().split('T')[0];
+                      }
+                      if (book.pages && book.format !== 'audiobook') {
+                        updates.currentPage = book.pages;
+                        setCurrentPage(book.pages);
+                      }
+                      if (book.audioDuration && book.format === 'audiobook') {
+                        updates.currentMinutes = book.audioDuration;
+                        setCurrentMinutes(book.audioDuration);
+                      }
+                      setCurrentStatus('Finished');
+                    } else if ((updates.currentPage || updates.currentMinutes || 0) > 0 && book.status === 'want-to-read') {
+                      updates.status = 'reading';
+                      setCurrentStatus('Currently Reading');
+                    }
+
                     if (Object.keys(updates).length > 0) {
                       onUpdateBook?.(updates);
                     }
-                    
+
                     setShowDatePicker(false);
-                    
+
                     // Reset temp fields
                     setTempStartYear('');
                     setTempStartMonth('');
@@ -2215,6 +2520,7 @@ export function BookDetailPage({ book, onBack, onUpdateBook, onBookFinished }: B
                     setTempFinishYear('');
                     setTempFinishMonth('');
                     setTempFinishDay('');
+                    setTempLogEntries([]);
                   }}
                   className="w-full h-12 rounded-xl text-sm font-semibold text-white active:scale-[0.98] transition-transform"
                   style={{ background: dynamicGradient }}
@@ -2231,6 +2537,7 @@ export function BookDetailPage({ book, onBack, onUpdateBook, onBookFinished }: B
                       setTempFinishYear('');
                       setTempFinishMonth('');
                       setTempFinishDay('');
+                      setTempLogEntries([]);
                     }}
                     className="w-full h-12 rounded-xl text-sm font-semibold bg-transparent text-gray-400 active:bg-[#2a2a2a] active:scale-[0.98] transition-all"
                   >

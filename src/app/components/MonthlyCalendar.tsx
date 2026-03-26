@@ -11,7 +11,7 @@ interface MonthlyCalendarProps {
 }
 
 export function MonthlyCalendar({ onBookSelect }: MonthlyCalendarProps) {
-  const { books } = useBooks();
+  const { books, readingSessions } = useBooks();
   const { currentTheme } = useTheme();
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [customBackground, setCustomBackground] = useState<any>(null);
@@ -33,11 +33,62 @@ export function MonthlyCalendar({ onBookSelect }: MonthlyCalendarProps) {
   const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
   // Get books finished on each date
-  const booksByDate = useMemo(() => {
+  const { booksByDate, finishedBooksByDate } = useMemo(() => {
     const dateMap: { [date: string]: Set<string> } = {}; // Use Set to track book IDs and prevent duplicates
     const bookMap: { [date: string]: any[] } = {};
+    const finishedDateMap: { [date: string]: Set<string> } = {};
+    const finishedBookMap: { [date: string]: any[] } = {};
 
     console.log('📅 MonthlyCalendar: Processing books for calendar...');
+
+    // Helper function to parse date string to YYYY-MM-DD
+    const parseDate = (dateStr: string): string | null => {
+      if (!dateStr) return null;
+      // Check if date is already in YYYY-MM-DD format
+      const isoMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (isoMatch) {
+        return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+      }
+      
+      // Handle "YYYY/MM/DD" format
+      const slashMatch = dateStr.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})/);
+      if (slashMatch) {
+        const year = slashMatch[1];
+        const month = String(slashMatch[2]).padStart(2, '0');
+        const day = String(slashMatch[3]).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+      }
+      
+      // Use Date parser for other formats
+      try {
+        const date = new Date(dateStr);
+        if (isNaN(date.getTime())) {
+          return null;
+        }
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+      } catch (e) {
+        return null;
+      }
+    };
+
+    const addBookToDate = (
+      targetSetMap: { [date: string]: Set<string> },
+      targetBookMap: { [date: string]: any[] },
+      dateKey: string,
+      book: any,
+    ) => {
+      if (!targetSetMap[dateKey]) {
+        targetSetMap[dateKey] = new Set();
+        targetBookMap[dateKey] = [];
+      }
+      if (!targetSetMap[dateKey].has(book.id)) {
+        targetSetMap[dateKey].add(book.id);
+        targetBookMap[dateKey].push(book);
+      }
+    };
 
     books
       .filter(b => b.status === 'finished' && (b.finishDate || b.dateRead))
@@ -59,38 +110,6 @@ export function MonthlyCalendar({ onBookSelect }: MonthlyCalendarProps) {
         }
 
         console.log(`📅 Processing book: "${book.title}" - Start: "${startDateStr}", Finish: "${finishDateStr}"`);
-
-        // Helper function to parse date string to YYYY-MM-DD
-        const parseDate = (dateStr: string): string | null => {
-          // Check if date is already in YYYY-MM-DD format
-          const isoMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
-          if (isoMatch) {
-            return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
-          }
-          
-          // Handle "YYYY/MM/DD" format
-          const slashMatch = dateStr.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})/);
-          if (slashMatch) {
-            const year = slashMatch[1];
-            const month = String(slashMatch[2]).padStart(2, '0');
-            const day = String(slashMatch[3]).padStart(2, '0');
-            return `${year}-${month}-${day}`;
-          }
-          
-          // Use Date parser for other formats
-          try {
-            const date = new Date(dateStr);
-            if (isNaN(date.getTime())) {
-              return null;
-            }
-            const year = date.getFullYear();
-            const month = String(date.getMonth() + 1).padStart(2, '0');
-            const day = String(date.getDate()).padStart(2, '0');
-            return `${year}-${month}-${day}`;
-          } catch (e) {
-            return null;
-          }
-        };
 
         const finishKey = parseDate(finishDateStr);
         if (!finishKey) {
@@ -129,14 +148,8 @@ export function MonthlyCalendar({ onBookSelect }: MonthlyCalendarProps) {
             if (dayCount > 365) {
               console.error(`  ⚠️ Unreasonable date range for "${book.title}": ${dayCount} days. Check dates!`);
               // Just add to finish date
-              if (!dateMap[finishKey]) {
-                dateMap[finishKey] = new Set();
-                bookMap[finishKey] = [];
-              }
-              if (!dateMap[finishKey].has(book.id)) {
-                dateMap[finishKey].add(book.id);
-                bookMap[finishKey].push(book);
-              }
+              addBookToDate(dateMap, bookMap, finishKey, book);
+              addBookToDate(finishedDateMap, finishedBookMap, finishKey, book);
               return;
             }
             
@@ -169,6 +182,8 @@ export function MonthlyCalendar({ onBookSelect }: MonthlyCalendarProps) {
                 dateMap[dateKey].add(book.id);
                 bookMap[dateKey].push(book);
               }
+
+              addBookToDate(finishedDateMap, finishedBookMap, dateKey, book);
               
               currentDate.setDate(currentDate.getDate() + 1);
               addedDays++;
@@ -180,34 +195,64 @@ export function MonthlyCalendar({ onBookSelect }: MonthlyCalendarProps) {
           } else {
             // No valid start date, just add to finish date
             console.log(`  📅 No valid start date, adding only to finish date: ${finishKey}`);
-            if (!dateMap[finishKey]) {
-              dateMap[finishKey] = new Set();
-              bookMap[finishKey] = [];
-            }
-            if (!dateMap[finishKey].has(book.id)) {
-              dateMap[finishKey].add(book.id);
-              bookMap[finishKey].push(book);
-            }
+            addBookToDate(dateMap, bookMap, finishKey, book);
+            addBookToDate(finishedDateMap, finishedBookMap, finishKey, book);
           }
         } else {
           // No start date, just add to finish date
           console.log(`  📅 No start date, adding only to finish date: ${finishKey}`);
-          if (!dateMap[finishKey]) {
-            dateMap[finishKey] = new Set();
-            bookMap[finishKey] = [];
-          }
-          if (!dateMap[finishKey].has(book.id)) {
-            dateMap[finishKey].add(book.id);
-            bookMap[finishKey].push(book);
-          }
+          addBookToDate(dateMap, bookMap, finishKey, book);
+          addBookToDate(finishedDateMap, finishedBookMap, finishKey, book);
+        }
+      });
+
+    // Add currently reading books on days where reading sessions exist
+    readingSessions.forEach((session: any) => {
+      const dateKey = parseDate(session?.date);
+      if (!dateKey) return;
+
+      const sessionBook = books.find(
+        (book: any) =>
+          book.id === session.bookId &&
+          (book.status === 'reading' || book.status === 'on-hold'),
+      );
+      if (!sessionBook) return;
+      addBookToDate(dateMap, bookMap, dateKey, sessionBook);
+    });
+
+    // Ensure currently reading books are reflected across their active reading range.
+    // This covers cases where progress was updated but no explicit reading_session row exists yet.
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    books
+      .filter((b: any) => b.status === 'reading' || b.status === 'on-hold')
+      .forEach((book: any) => {
+        const startKey = parseDate(book.startDate);
+        const fallbackStart = parseDate(book.dateRead || book.finishDate || '');
+        const effectiveStartKey = startKey || fallbackStart;
+        if (!effectiveStartKey) return;
+
+        let startDate = new Date(`${effectiveStartKey}T00:00:00`);
+        if (isNaN(startDate.getTime())) return;
+        if (startDate > today) return;
+
+        // Safety cap to avoid runaway loops on bad data.
+        const maxDays = 366;
+        let steps = 0;
+        const cursor = new Date(startDate);
+        while (cursor <= today && steps < maxDays) {
+          const dateKey = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`;
+          addBookToDate(dateMap, bookMap, dateKey, book);
+          cursor.setDate(cursor.getDate() + 1);
+          steps += 1;
         }
       });
 
     console.log('📅 Final date map:', Object.keys(bookMap).sort());
     console.log('📅 Total dates with books:', Object.keys(bookMap).length);
     
-    return bookMap;
-  }, [books]);
+    return { booksByDate: bookMap, finishedBooksByDate: finishedBookMap };
+  }, [books, readingSessions]);
 
   const goToPreviousMonth = () => {
     setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1));
@@ -385,6 +430,19 @@ export function MonthlyCalendar({ onBookSelect }: MonthlyCalendarProps) {
                         ))}
                       </div>
                     )}
+
+                    {/* Show reading badge for currently reading/on-hold books */}
+                    {!isFinishedOnThisDay && (book.status === 'reading' || book.status === 'on-hold') && (
+                      <div
+                        className="text-[7px] font-bold px-1 py-0.5 rounded"
+                        style={{
+                          backgroundColor: '#10b981',
+                          color: '#ffffff',
+                        }}
+                      >
+                        Reading
+                      </div>
+                    )}
                   </div>
                   
                   {/* Tooltip on hover */}
@@ -540,7 +598,7 @@ export function MonthlyCalendar({ onBookSelect }: MonthlyCalendarProps) {
                   const [y, m] = key.split('-').map(Number);
                   return y === year && m === month + 1;
                 })
-                .reduce((sum, key) => sum + booksByDate[key].length, 0)}
+                .reduce((sum, key) => sum + (finishedBooksByDate[key]?.length || 0), 0)}
             </div>
             <div 
               className="text-xs"

@@ -19,39 +19,166 @@ export function TimelineCalendar({ onBookSelect }: TimelineCalendarProps) {
   const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
   const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
+  const fallbackColorForBook = (book: any) => {
+    const source = `${book?.id || ''}|${book?.title || ''}|${book?.author || ''}`;
+    let hash = 0;
+    for (let i = 0; i < source.length; i += 1) {
+      hash = source.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const hue = Math.abs(hash) % 360;
+    return `hsl(${hue}, 62%, 46%)`;
+  };
+
+  const extractCoverColorInBrowser = async (imageUrl: string): Promise<string | null> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.referrerPolicy = 'no-referrer';
+
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          const size = 28;
+          canvas.width = size;
+          canvas.height = size;
+          const ctx = canvas.getContext('2d', { willReadFrequently: true });
+          if (!ctx) {
+            resolve(null);
+            return;
+          }
+
+          ctx.drawImage(img, 0, 0, size, size);
+          const { data } = ctx.getImageData(0, 0, size, size);
+
+          // Bucket by hue to find the strongest vivid family.
+          const bucketCount = 24;
+          const buckets = new Array(bucketCount).fill(0).map(() => ({
+            weight: 0,
+            sat: 0,
+            light: 0,
+            count: 0,
+          }));
+
+          for (let i = 0; i < data.length; i += 4) {
+            const r = data[i] / 255;
+            const g = data[i + 1] / 255;
+            const b = data[i + 2] / 255;
+            const a = data[i + 3] / 255;
+            if (a < 0.4) continue;
+
+            const max = Math.max(r, g, b);
+            const min = Math.min(r, g, b);
+            const delta = max - min;
+            const light = (max + min) / 2;
+
+            // Skip near-neutral pixels (white/black/gray backgrounds).
+            if (delta < 0.08 || light > 0.92 || light < 0.08) continue;
+
+            let hue = 0;
+            if (delta !== 0) {
+              if (max === r) hue = ((g - b) / delta) % 6;
+              else if (max === g) hue = (b - r) / delta + 2;
+              else hue = (r - g) / delta + 4;
+              hue *= 60;
+              if (hue < 0) hue += 360;
+            }
+
+            const sat = delta / (1 - Math.abs(2 * light - 1) || 1);
+            const bucketIndex = Math.max(0, Math.min(bucketCount - 1, Math.floor((hue / 360) * bucketCount)));
+            const vividWeight = 0.35 + sat * 0.8 + (1 - Math.abs(light - 0.5)) * 0.25;
+
+            buckets[bucketIndex].weight += vividWeight;
+            buckets[bucketIndex].sat += sat;
+            buckets[bucketIndex].light += light;
+            buckets[bucketIndex].count += 1;
+          }
+
+          const best = buckets
+            .map((bucket, index) => ({ bucket, index }))
+            .filter(({ bucket }) => bucket.count > 0)
+            .sort((a, b) => b.bucket.weight - a.bucket.weight)[0];
+
+          if (!best) {
+            resolve(null);
+            return;
+          }
+
+          const avgSat = best.bucket.sat / best.bucket.count;
+          const avgLight = best.bucket.light / best.bucket.count;
+          const hueMid = ((best.index + 0.5) / bucketCount) * 360;
+          const satPct = Math.round(Math.max(55, Math.min(88, avgSat * 100)));
+          const lightPct = Math.round(Math.max(34, Math.min(56, avgLight * 100)));
+
+          resolve(`hsl(${Math.round(hueMid)}, ${satPct}%, ${lightPct}%)`);
+        } catch {
+          resolve(null);
+        }
+      };
+
+      img.onerror = () => resolve(null);
+      img.src = imageUrl;
+    });
+  };
+
+  const toDateOrNull = (raw?: string) => {
+    if (!raw) return null;
+    const parsed = new Date(raw);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  };
+
   // Calculate timeline data for the selected month
   const timelineData = useMemo(() => {
     const daysInMonth = new Date(currentYear, selectedMonth, 0).getDate();
     const firstDayOfMonth = new Date(currentYear, selectedMonth - 1, 1).getDay();
+    const monthStart = new Date(currentYear, selectedMonth - 1, 1);
+    const monthEnd = new Date(currentYear, selectedMonth - 1, daysInMonth, 23, 59, 59, 999);
     // Adjust for Monday start (0 = Sunday, need to make Monday = 0)
     const adjustedFirstDay = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1;
     
-    // Get finished books in this month
+    // Keep timeline readable: only show books finished in selected month
     const finishedBooksInMonth = books.filter((b: any) => {
-      if (b.status !== 'finished' || (!b.finishDate && !b.dateRead)) return false;
-      const finishDate = new Date(b.finishDate || b.dateRead);
-      return finishDate.getFullYear() === currentYear && finishDate.getMonth() === selectedMonth - 1;
+      if (b.status !== 'finished') return false;
+      const finish = toDateOrNull(b.finishDate || b.dateRead);
+      if (!finish) return false;
+      return finish >= monthStart && finish <= monthEnd;
     });
+
+    // Bottom strip: also include currently-reading books relevant to this month.
+    const currentlyReadingInMonth = books.filter((b: any) => {
+      if (b.status !== 'reading' && b.status !== 'on-hold') return false;
+      const start = toDateOrNull(b.startDate);
+      if (!start) return false;
+      return start <= monthEnd;
+    });
+
+    const booksForBottomStrip = Array.from(
+      new Map(
+        [...finishedBooksInMonth, ...currentlyReadingInMonth].map((book: any) => [book.id, book]),
+      ).values(),
+    );
 
     // Calculate pages read per day and book timelines
     const dailyPages: { [key: number]: number } = {};
     const bookTimelines: any[] = [];
 
     finishedBooksInMonth.forEach((book: any) => {
-      const startDate = book.startDate ? new Date(book.startDate) : null;
-      const finishDate = new Date(book.finishDate || book.dateRead);
+      const startDateRaw = toDateOrNull(book.startDate);
+      const finishDateRaw = toDateOrNull(book.finishDate || book.dateRead);
+      const hasFinishDate = true;
+      if (!finishDateRaw) return;
       
-      // Calculate which days this book was read
-      let startDay = 1;
-      let endDay = finishDate.getDate();
+      // Clamp timeline range to month boundaries.
+      const clampedStart = startDateRaw && startDateRaw > monthStart ? startDateRaw : monthStart;
+      const clampedEnd = finishDateRaw < monthEnd ? finishDateRaw : monthEnd;
       
-      if (startDate && startDate.getMonth() === selectedMonth - 1 && startDate.getFullYear() === currentYear) {
-        startDay = startDate.getDate();
-      }
+      if (clampedEnd < monthStart || clampedStart > monthEnd) return;
+
+      const startDay = Math.max(1, Math.min(daysInMonth, clampedStart.getDate()));
+      const endDay = Math.max(startDay, Math.min(daysInMonth, clampedEnd.getDate()));
       
       // Calculate pages per day
       const totalPages = book.pages || 0;
-      const daysRead = endDay - startDay + 1;
+      const daysRead = Math.max(1, endDay - startDay + 1);
       const pagesPerDay = Math.floor(totalPages / daysRead);
       
       for (let day = startDay; day <= endDay; day++) {
@@ -63,6 +190,13 @@ export function TimelineCalendar({ onBookSelect }: TimelineCalendarProps) {
         startDay,
         endDay,
         totalPages,
+        hasFinishDate,
+        startsInMonth: Boolean(
+          startDateRaw &&
+            startDateRaw.getFullYear() === currentYear &&
+            startDateRaw.getMonth() === selectedMonth - 1,
+        ),
+        finishesInMonth: true,
       });
     });
 
@@ -112,6 +246,7 @@ export function TimelineCalendar({ onBookSelect }: TimelineCalendarProps) {
       weeks,
       bookTimelines,
       finishedBooksInMonth,
+      booksForBottomStrip,
       maxPages,
       maxPagesDay,
       dailyPages,
@@ -128,12 +263,19 @@ export function TimelineCalendar({ onBookSelect }: TimelineCalendarProps) {
       await Promise.all(
         timelineData.finishedBooksInMonth.map(async (book: any) => {
           if (!book.cover) {
-            // Fallback for books without covers
-            colors[book.id] = '#6b7280';
+            colors[book.id] = fallbackColorForBook(book);
             return;
           }
           
           try {
+            // 1) Try browser-side extraction first (best visual match to the actual displayed cover).
+            const browserColor = await extractCoverColorInBrowser(book.cover);
+            if (browserColor) {
+              colors[book.id] = browserColor;
+              return;
+            }
+
+            // 2) Fallback to edge function extraction.
             const response = await fetch(
               `https://${projectId}.supabase.co/functions/v1/make-server-14217f91/extract-color`,
               {
@@ -148,15 +290,14 @@ export function TimelineCalendar({ onBookSelect }: TimelineCalendarProps) {
             
             if (response.ok) {
               const data = await response.json();
-              colors[book.id] = data.color;
+              colors[book.id] = data?.color || fallbackColorForBook(book);
               console.log(`✅ [Timeline] Got color for "${book.title}": ${data.color}`);
             } else {
-              // Fallback to gray
-              colors[book.id] = '#6b7280';
+              colors[book.id] = fallbackColorForBook(book);
             }
           } catch (error) {
             console.error(`❌ [Timeline] Error fetching color for "${book.title}":`, error);
-            colors[book.id] = '#6b7280';
+            colors[book.id] = fallbackColorForBook(book);
           }
         })
       );
@@ -287,6 +428,17 @@ export function TimelineCalendar({ onBookSelect }: TimelineCalendarProps) {
         <div className="relative">
           {timelineData.weeks.map((week, weekIdx) => (
             <div key={weekIdx} className="grid grid-cols-7 border-b border-gray-200 last:border-b-0 relative" style={{ minHeight: '110px' }}>
+              {(() => {
+                const weekStartDay = weekIdx * 7 - timelineData.adjustedFirstDay + 1;
+                const weekEndDay = weekStartDay + 6;
+                const weekTimelines = timelineData.bookTimelines.filter((timeline: any) => {
+                  return !(timeline.endDay < weekStartDay || timeline.startDay > weekEndDay);
+                });
+                const laneTopMin = 34;
+                const laneTopMax = 66; // keep bars safely above page-count labels at the bottom
+
+                return (
+                  <>
               {/* Day cells */}
               {week.map((dayData: any, dayIdx: number) => {
                 if (dayData.type === 'empty') {
@@ -322,15 +474,7 @@ export function TimelineCalendar({ onBookSelect }: TimelineCalendarProps) {
               })}
 
               {/* Book timeline bars and covers for this week */}
-              {timelineData.bookTimelines.map((timeline: any, timelineIdx: number) => {
-                const weekStartDay = weekIdx * 7 - timelineData.adjustedFirstDay + 1;
-                const weekEndDay = weekStartDay + 6;
-
-                // Check if this book's timeline intersects with this week
-                if (timeline.endDay < weekStartDay || timeline.startDay > weekEndDay) {
-                  return null;
-                }
-
+              {weekTimelines.map((timeline: any, timelineIdx: number) => {
                 // Calculate which columns this book spans in this week
                 const startCol = Math.max(0, timeline.startDay - weekStartDay);
                 const endCol = Math.min(6, timeline.endDay - weekStartDay);
@@ -340,8 +484,25 @@ export function TimelineCalendar({ onBookSelect }: TimelineCalendarProps) {
 
                 const showCover = timeline.endDay >= weekStartDay && timeline.endDay <= weekEndDay;
                 const coverCol = timeline.endDay - weekStartDay;
+                const showStartMarker = timeline.startsInMonth && timeline.startDay >= weekStartDay && timeline.startDay <= weekEndDay;
+                const startColMarker = timeline.startDay - weekStartDay;
+                const showFinishMarker = timeline.finishesInMonth && timeline.endDay >= weekStartDay && timeline.endDay <= weekEndDay;
+                const segmentStartsThisWeek = timeline.startDay >= weekStartDay && timeline.startDay <= weekEndDay;
+                const segmentEndsThisWeek = timeline.endDay >= weekStartDay && timeline.endDay <= weekEndDay;
 
-                const barColor = bookColors[timeline.book.id];
+                const barColor = bookColors[timeline.book.id] || fallbackColorForBook(timeline.book);
+                const laneSpan = laneTopMax - laneTopMin;
+                const barTop =
+                  weekTimelines.length <= 1
+                    ? laneTopMin + laneSpan / 2
+                    : laneTopMin + (timelineIdx * laneSpan) / (weekTimelines.length - 1);
+                // If a segment continues from a prior week, start at the left edge of this week.
+                // If it continues into next week, end at the right edge of this week.
+                // True start/finish days still anchor to the center of their day cell.
+                const startAnchor = segmentStartsThisWeek ? startCol + 0.5 : startCol;
+                const endAnchor = segmentEndsThisWeek ? endCol + 0.5 : endCol + 1;
+                const barLeftPercent = (startAnchor / 7) * 100;
+                const barWidthPercent = Math.max(((endAnchor - startAnchor) / 7) * 100, 1.2);
 
                 return (
                   <div key={`timeline-${timeline.book.id}-${weekIdx}`}>
@@ -349,14 +510,51 @@ export function TimelineCalendar({ onBookSelect }: TimelineCalendarProps) {
                     <div
                       className="absolute pointer-events-none"
                       style={{
-                        left: `${(startCol / 7) * 100}%`,
-                        width: `${((endCol - startCol + 1) / 7) * 100}%`,
-                        top: `${40 + (timelineIdx * 6)}px`,
+                        left: `${barLeftPercent}%`,
+                        width: `${barWidthPercent}%`,
+                        top: `${barTop}px`,
                         height: '8px',
                         backgroundColor: barColor,
+                        opacity: 0.9,
+                        borderRadius: '999px',
                         zIndex: 1,
                       }}
                     />
+
+                    {/* Start marker */}
+                    {showStartMarker && (
+                      <div
+                        className="absolute pointer-events-none"
+                        style={{
+                          left: `${((startColMarker + 0.5) / 7) * 100}%`,
+                          top: `${barTop - 2}px`,
+                          width: '11px',
+                          height: '11px',
+                          borderRadius: '999px',
+                          backgroundColor: '#ffffff',
+                          border: `2px solid ${barColor}`,
+                          transform: 'translateX(-50%)',
+                          zIndex: 4,
+                        }}
+                      />
+                    )}
+
+                    {/* Finish marker */}
+                    {showFinishMarker && (
+                      <div
+                        className="absolute pointer-events-none"
+                        style={{
+                          left: `${((coverCol + 0.5) / 7) * 100}%`,
+                          top: `${barTop - 4}px`,
+                          width: '9px',
+                          height: '9px',
+                          backgroundColor: barColor,
+                          border: '1px solid #ffffff',
+                          transform: 'translateX(-50%) rotate(45deg)',
+                          zIndex: 4,
+                        }}
+                      />
+                    )}
 
                     {/* Book cover at finish date */}
                     {showCover && timeline.book.cover && (
@@ -382,14 +580,17 @@ export function TimelineCalendar({ onBookSelect }: TimelineCalendarProps) {
                   </div>
                 );
               })}
+                  </>
+                );
+              })()}
             </div>
           ))}
         </div>
 
-        {/* Books finished this month */}
+        {/* Books in this timeline month */}
         <div className="border-t border-gray-200 p-4 bg-gray-50">
           <div className="flex flex-wrap gap-3 justify-center">
-            {timelineData.finishedBooksInMonth.map((book: any) => {
+            {timelineData.booksForBottomStrip.map((book: any) => {
               const bookColor = bookColors[book.id];
               
               return (
@@ -429,15 +630,15 @@ export function TimelineCalendar({ onBookSelect }: TimelineCalendarProps) {
                       </div>
                     )}
                     
-                    {book.status === 'reading' && (
+                    {(book.status === 'reading' || book.status === 'on-hold') && (
                       <div 
-                        className="text-[9px] font-bold text-center px-2 py-0.5 rounded text-white mt-1"
+                        className="text-[9px] font-bold text-center px-2 py-1 rounded-sm text-white mt-1 border"
                         style={{ 
                           backgroundColor: bookColor,
-                          opacity: 0.8,
+                          borderColor: '#ffffff80',
                         }}
                       >
-                        Reading
+                        Currently Reading
                       </div>
                     )}
                   </div>
@@ -456,6 +657,14 @@ export function TimelineCalendar({ onBookSelect }: TimelineCalendarProps) {
           <div className="flex items-center gap-1.5">
             <span>🏆</span>
             <span>Most Pages Read</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span>◯</span>
+            <span>Started</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span>◆</span>
+            <span>Finished</span>
           </div>
         </div>
       </div>
