@@ -6,6 +6,7 @@ import { useBadges } from '../contexts/BadgesContext';
 import { useState } from 'react';
 import { getGoogleBooksApiKey, setGoogleBooksApiKey, clearGoogleBooksApiKey, hasApiKey } from '../utils/authorDatabase';
 import { useAuth } from '../contexts/AuthContext';
+import { supabase } from '../lib/supabase';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -17,7 +18,7 @@ export function SettingsModal({ isOpen, onClose, onOpenImport }: SettingsModalPr
   const { currentTheme } = useTheme();
   const { books, readingSessions, bookshelves } = useBooks();
   const { earnedBadges } = useBadges();
-  const { signOut, isConfigured } = useAuth();
+  const { signOut, isConfigured, user } = useAuth();
   const [isClearing, setIsClearing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [apiKey, setApiKey] = useState(hasApiKey() ? getGoogleBooksApiKey() : '');
@@ -72,19 +73,36 @@ export function SettingsModal({ isOpen, onClose, onOpenImport }: SettingsModalPr
     }
     
     try {
-      console.log('🔥 HARD RESET INITIATED - Clearing all localStorage...');
-      
-      // Clear ALL localStorage keys related to the app
+      setIsClearing(true);
+      console.log('🔥 HARD RESET INITIATED');
+
+      // IMPORTANT: If user is authenticated, clear cloud data first.
+      // If localStorage is cleared first, Supabase session tokens are lost and delete requests can fail.
+      if (isConfigured && supabase && user?.id) {
+        console.log('☁️ Clearing Supabase data for current user...');
+        const tableNames = ['reading_sessions', 'bookshelves', 'books'] as const;
+
+        for (const table of tableNames) {
+          const { error } = await supabase.from(table).delete().eq('user_id', user.id);
+          if (error) {
+            throw new Error(`Failed to clear ${table}: ${error.message}`);
+          }
+        }
+
+        console.log('✅ Supabase data cleared');
+      }
+
+      console.log('🧹 Clearing browser storage...');
       localStorage.clear();
-      
-      console.log('✅ All localStorage cleared. Reloading page...');
-      
-      // Force an immediate reload - app will start completely fresh
+      sessionStorage.clear();
+
+      console.log('✅ Reset complete. Reloading page...');
       window.location.reload();
-      
     } catch (error) {
       console.error('❌ Hard reset failed:', error);
       alert('Reset failed: ' + (error instanceof Error ? error.message : String(error)));
+    } finally {
+      setIsClearing(false);
     }
   };
 
