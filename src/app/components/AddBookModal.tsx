@@ -148,8 +148,8 @@ export function AddBookModal({ isOpen, onClose, onAddBook, availableShelves = []
       // Handle special "Currently Reading" status
       if (shelfName === 'Currently Reading' || shelfId === 'currently-reading') {
         shelfIds = [];
-        status = 'currently-reading';
-        console.log('  📗 Mapped to: Currently Reading (no shelf), status=currently-reading');
+        status = 'reading';
+        console.log('  📗 Mapped to: Currently Reading (no shelf), status=reading');
       } else {
         // For all other shelves (including custom ones), use the shelf ID
         shelfIds = [shelfId];

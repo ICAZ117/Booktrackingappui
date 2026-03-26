@@ -111,6 +111,12 @@ const parseStoredJSON = <T,>(key: string, fallback: T): T => {
   }
 };
 
+const normalizeStatus = (status: Book['status'] | string | undefined): Book['status'] | undefined => {
+  if (!status) return status;
+  if (status === 'currently-reading') return 'reading';
+  return status as Book['status'];
+};
+
 const normalizeBook = (book: Partial<Book>): Book | null => {
   if (!book.id || !book.title) return null;
 
@@ -119,7 +125,7 @@ const normalizeBook = (book: Partial<Book>): Book | null => {
     title: String(book.title),
     author: book.author ? String(book.author) : 'Unknown Author',
     cover: book.cover ? String(book.cover) : '',
-    status: book.status,
+    status: normalizeStatus(book.status),
     rating: book.rating,
     progress: book.progress,
     pages: book.pages,
@@ -172,7 +178,7 @@ const rowToBook = (row: BookRow): Book => ({
   title: row.title,
   author: row.author,
   cover: row.cover,
-  status: row.status,
+  status: normalizeStatus(row.status),
   rating: row.rating,
   progress: row.progress,
   pages: row.pages,
