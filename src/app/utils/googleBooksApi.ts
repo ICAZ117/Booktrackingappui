@@ -102,6 +102,7 @@ const customSearchEndpoint = import.meta.env.VITE_BOOK_SEARCH_ENDPOINT || '';
 const googleBooksApiKey = import.meta.env.VITE_GOOGLE_BOOKS_API_KEY || '';
 const SEARCH_CACHE_TTL_MS = 15 * 60 * 1000;
 const SEARCH_CACHE_PREFIX = 'readtrack_search_cache_v15:';
+const PROVIDER_FETCH_TIMEOUT_MS = 7000;
 
 function ensureHttps(url?: string) {
   if (!url) return '';
@@ -198,7 +199,12 @@ function looksLikeAuthorQuery(query: string) {
   const q = normalizeText(query);
   if (!q || q.includes(':') || q.includes('"')) return false;
   const words = q.split(' ').filter(Boolean);
-  return words.length >= 2 && words.length <= 4;
+  if (words.length < 2 || words.length > 4) return false;
+
+  // Avoid expensive author-mode fanout for sentence-like queries.
+  const stopWords = new Set(['the', 'a', 'an', 'and', 'or', 'to', 'for', 'with', 'of', 'in', 'on', 'at', 'from', 'this', 'that', 'not', 'my']);
+  const stopWordCount = words.filter((word) => stopWords.has(word)).length;
+  return stopWordCount <= 1;
 }
 
 function openLibraryCoverByIsbn(isbn?: string) {
@@ -208,8 +214,19 @@ function openLibraryCoverByIsbn(isbn?: string) {
   return `https://covers.openlibrary.org/b/isbn/${clean}-L.jpg`;
 }
 
+async function fetchWithTimeout(input: string, timeoutMs = PROVIDER_FETCH_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(input, { signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 async function fetchGoogleBooks(params: SearchBooksParams): Promise<GoogleBook[]> {
-  const response = await fetch(buildGoogleUrl(params));
+  const response = await fetchWithTimeout(buildGoogleUrl(params));
   if (!response.ok) {
     throw new Error(`Google Books request failed (${response.status})`);
   }
@@ -224,7 +241,7 @@ async function fetchOpenLibraryBooks(query: string, limit = 20): Promise<GoogleB
   url.searchParams.set('q', query);
   url.searchParams.set('limit', String(Math.min(limit, 50)));
 
-  const response = await fetch(url.toString());
+  const response = await fetchWithTimeout(url.toString());
   if (!response.ok) return [];
 
   const payload = await response.json();
@@ -237,7 +254,7 @@ async function fetchOpenLibraryByTitle(title: string, limit = 40): Promise<Googl
   url.searchParams.set('title', title);
   url.searchParams.set('limit', String(Math.min(limit, 100)));
 
-  const response = await fetch(url.toString());
+  const response = await fetchWithTimeout(url.toString());
   if (!response.ok) return [];
 
   const payload = await response.json();
@@ -250,7 +267,7 @@ async function fetchOpenLibraryByAuthor(author: string, limit = 20): Promise<Goo
   url.searchParams.set('author', author);
   url.searchParams.set('limit', String(Math.min(limit, 50)));
 
-  const response = await fetch(url.toString());
+  const response = await fetchWithTimeout(url.toString());
   if (!response.ok) return [];
 
   const payload = await response.json();
@@ -264,7 +281,7 @@ async function fetchOpenLibraryAuthorWorks(author: string, limit = 80): Promise<
     authorSearchUrl.searchParams.set('q', author);
     authorSearchUrl.searchParams.set('limit', '10');
 
-    const searchResponse = await fetch(authorSearchUrl.toString());
+    const searchResponse = await fetchWithTimeout(authorSearchUrl.toString());
     if (!searchResponse.ok) return [];
 
     const searchPayload = await searchResponse.json();
@@ -282,7 +299,7 @@ async function fetchOpenLibraryAuthorWorks(author: string, limit = 80): Promise<
     const worksUrl = new URL(`https://openlibrary.org${bestAuthor.key}/works.json`);
     worksUrl.searchParams.set('limit', String(Math.min(limit, 200)));
 
-    const worksResponse = await fetch(worksUrl.toString());
+    const worksResponse = await fetchWithTimeout(worksUrl.toString());
     if (!worksResponse.ok) return [];
 
     const worksPayload = await worksResponse.json();
@@ -316,7 +333,7 @@ async function fetchItunesAudiobooks(query: string, limit = 40): Promise<GoogleB
     url.searchParams.set('entity', 'audiobook');
     url.searchParams.set('limit', String(Math.min(limit, 50)));
 
-    const response = await fetch(url.toString());
+    const response = await fetchWithTimeout(url.toString());
     if (!response.ok) return [];
     const payload = await response.json();
     const results: ItunesAudiobookResult[] = payload?.results || [];
@@ -373,7 +390,7 @@ async function fetchFromCustomEndpoint(params: SearchBooksParams): Promise<Googl
       url.searchParams.set('orderBy', params.orderBy);
     }
 
-    const response = await fetch(url.toString());
+    const response = await fetchWithTimeout(url.toString());
     if (!response.ok) {
       throw new Error(`Book search endpoint failed (${response.status})`);
     }

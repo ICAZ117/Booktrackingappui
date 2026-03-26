@@ -1,6 +1,6 @@
 import { Search, TrendingUp, Filter, Star } from 'lucide-react';
 import { BookCard } from './BookCard';
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useTheme } from '../contexts/ThemeContext';
 import { useBooks } from '../contexts/BooksContext';
 import { BookCover } from './BookCover';
@@ -8,6 +8,9 @@ import { LoadingSpinner } from './LoadingSpinner';
 import { getTrendingBooks, convertGoogleBookToBookData, BookData, searchBooks } from '../utils/googleBooksApi';
 
 const genres = ['All', 'Fantasy', 'Romance', 'Thriller', 'Sci-Fi', 'Contemporary', 'Mystery', 'Historical'];
+const CURATED_QUERY_LIMIT = 8;
+const CURATED_QUERY_CONCURRENCY = 4;
+const SEARCH_TIMEOUT_MS = 8000;
 
 const popularLists = [
   {
@@ -45,6 +48,7 @@ export function Browse({ onBookSelect }: { onBookSelect?: (book: any) => void })
   const [selectedList, setSelectedList] = useState<string | null>(null);
   const [listBooks, setListBooks] = useState<BookData[]>([]);
   const [isLoadingList, setIsLoadingList] = useState(false);
+  const searchRequestIdRef = useRef(0);
 
   const looksLikeAuthorQuery = (query: string) => {
     const q = query.toLowerCase().trim();
@@ -65,11 +69,47 @@ export function Browse({ onBookSelect }: { onBookSelect?: (book: any) => void })
     }
   };
 
+  const searchBooksWithTimeout = async (query: string, maxResults = 4) => {
+    const timeoutPromise = new Promise<[]>(
+      (resolve) => setTimeout(() => resolve([]), SEARCH_TIMEOUT_MS),
+    );
+
+    const results = await Promise.race([
+      searchBooks({ query, maxResults }),
+      timeoutPromise,
+    ]);
+
+    return results.map(convertGoogleBookToBookData);
+  };
+
+  const fetchCuratedBooks = async (queries: string[]) => {
+    const trimmedQueries = queries.slice(0, CURATED_QUERY_LIMIT);
+    const allBooks: BookData[] = [];
+
+    for (let index = 0; index < trimmedQueries.length; index += CURATED_QUERY_CONCURRENCY) {
+      const chunk = trimmedQueries.slice(index, index + CURATED_QUERY_CONCURRENCY);
+      const settled = await Promise.allSettled(
+        chunk.map((query) => searchBooksWithTimeout(query, 4)),
+      );
+
+      settled.forEach((result) => {
+        if (result.status === 'fulfilled') {
+          allBooks.push(...result.value);
+        }
+      });
+    }
+
+    return Array.from(
+      new Map(allBooks.map((book) => [book.title.toLowerCase(), book])).values(),
+    );
+  };
+
   // When genre is selected, fetch books from that genre
   useEffect(() => {
     if (selectedGenre !== 'All') {
       // Reset selected list when genre is changed
       setSelectedList(null);
+      let isActive = true;
       
       const fetchGenreBooks = async () => {
         setIsLoadingGenre(true);
@@ -122,43 +162,30 @@ export function Browse({ onBookSelect }: { onBookSelect?: (book: any) => void })
           
           const queries = genreQueries[selectedGenre] || [`${selectedGenre} bestseller`];
           
-          console.log(`📚 Fetching 25-50 popular ${selectedGenre} books with ${queries.length} curated queries`);
-          
-          // Fetch books for each query
-          const allBooks: BookData[] = [];
-          
-          for (const query of queries) {
-            try {
-              const results = await searchBooks({
-                query,
-                maxResults: 4, // 15 queries x 4 books = ~60 books before deduplication
-              });
-              const bookData = results.map(convertGoogleBookToBookData);
-              allBooks.push(...bookData);
-              
-              // Small delay to avoid rate limits
-              await new Promise(resolve => setTimeout(resolve, 80));
-            } catch (error) {
-              console.error(`Error searching for "${query}":`, error);
-            }
-          }
-          
-          // Remove duplicates based on title
-          const uniqueBooks = Array.from(
-            new Map(allBooks.map(book => [book.title.toLowerCase(), book])).values()
+          console.log(
+            `📚 Fetching popular ${selectedGenre} books with ${Math.min(queries.length, CURATED_QUERY_LIMIT)} curated queries`,
           );
+          const uniqueBooks = await fetchCuratedBooks(queries);
           
           console.log(`✅ Found ${uniqueBooks.length} popular ${selectedGenre} books`);
-          
-          setGenreBooks(uniqueBooks);
+          if (isActive) {
+            setGenreBooks(uniqueBooks);
+          }
         } catch (error) {
           console.error('Genre search error:', error);
-          setGenreBooks([]);
+          if (isActive) {
+            setGenreBooks([]);
+          }
         } finally {
-          setIsLoadingGenre(false);
+          if (isActive) {
+            setIsLoadingGenre(false);
+          }
         }
       };
       fetchGenreBooks();
+      return () => {
+        isActive = false;
+      };
     } else {
       setGenreBooks([]);
     }
@@ -167,6 +194,7 @@ export function Browse({ onBookSelect }: { onBookSelect?: (book: any) => void })
   // When a popular list is clicked, fetch books for that list
   useEffect(() => {
     if (selectedList) {
+      let isActive = true;
       const fetchListBooks = async () => {
         setIsLoadingList(true);
         try {
@@ -200,42 +228,27 @@ export function Browse({ onBookSelect }: { onBookSelect?: (book: any) => void })
           const queries = listQueries[selectedList] || [`${selectedList} bestseller`];
           
           console.log(`📚 Fetching ${selectedList} with ${queries.length} curated queries`);
-          
-          // Fetch books for each query
-          const allBooks: BookData[] = [];
-          
-          for (const query of queries) {
-            try {
-              const results = await searchBooks({
-                query,
-                maxResults: 4,
-              });
-              const bookData = results.map(convertGoogleBookToBookData);
-              allBooks.push(...bookData);
-              
-              // Small delay to avoid rate limits
-              await new Promise(resolve => setTimeout(resolve, 80));
-            } catch (error) {
-              console.error(`Error searching for "${query}":`, error);
-            }
-          }
-          
-          // Remove duplicates based on title
-          const uniqueBooks = Array.from(
-            new Map(allBooks.map(book => [book.title.toLowerCase(), book])).values()
-          );
+          const uniqueBooks = await fetchCuratedBooks(queries);
           
           console.log(`✅ Found ${uniqueBooks.length} books for ${selectedList}`);
-          
-          setListBooks(uniqueBooks);
+          if (isActive) {
+            setListBooks(uniqueBooks);
+          }
         } catch (error) {
           console.error('List search error:', error);
-          setListBooks([]);
+          if (isActive) {
+            setListBooks([]);
+          }
         } finally {
-          setIsLoadingList(false);
+          if (isActive) {
+            setIsLoadingList(false);
+          }
         }
       };
       fetchListBooks();
+      return () => {
+        isActive = false;
+      };
     }
   }, [selectedList]);
 
@@ -261,6 +274,7 @@ export function Browse({ onBookSelect }: { onBookSelect?: (book: any) => void })
   // Perform external search when user types
   useEffect(() => {
     if (searchQuery.trim().length > 0) {
+      const requestId = ++searchRequestIdRef.current;
       const timeoutId = setTimeout(async () => {
         setIsSearching(true);
         try {
@@ -269,18 +283,23 @@ export function Browse({ onBookSelect }: { onBookSelect?: (book: any) => void })
             query: searchQuery,
             maxResults: isAuthorSearch ? 60 : 20,
           });
+          if (searchRequestIdRef.current !== requestId) return;
           const bookData = results.map(convertGoogleBookToBookData);
           setExternalSearchResults(bookData);
         } catch (error) {
+          if (searchRequestIdRef.current !== requestId) return;
           console.error('Search error:', error);
           setExternalSearchResults([]);
         } finally {
+          if (searchRequestIdRef.current !== requestId) return;
           setIsSearching(false);
         }
       }, 500); // Debounce search
 
       return () => clearTimeout(timeoutId);
     } else {
+      searchRequestIdRef.current += 1;
+      setIsSearching(false);
       setExternalSearchResults([]);
     }
   }, [searchQuery]);
@@ -404,10 +423,18 @@ export function Browse({ onBookSelect }: { onBookSelect?: (book: any) => void })
             </span>
           </div>
           
-          {(isSearching || isLoadingGenre || isLoadingList) && (
+          {(isSearching || isLoadingGenre || isLoadingList) && allSearchResults.length === 0 && (
             <div className="text-center py-8">
               <LoadingSpinner text="Loading books..." />
             </div>
+          )}
+          {isSearching && allSearchResults.length > 0 && (
+            <p
+              className="text-xs mb-3"
+              style={{ color: currentTheme.textColor === 'light' ? '#9ca3af' : '#6b7280' }}
+            >
+              Updating results...
+            </p>
           )}
           
           {!isSearching && allSearchResults.length > 0 ? (

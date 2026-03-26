@@ -640,30 +640,6 @@ function AppContent() {
           style={{ backgroundColor: currentTheme.backgroundColor }}
         />
         
-        {/* Status Bar */}
-        <div 
-          className="hidden md:flex pt-12 pb-3 px-6 items-center justify-between text-xs"
-          style={{ backgroundColor: currentTheme.backgroundColor }}
-        >
-          <span 
-            className="font-semibold"
-            style={{ color: currentTheme.textColor === 'light' ? '#ffffff' : '#111827' }}
-          >
-            9:41
-          </span>
-          <div className="flex items-center gap-1">
-            <div 
-              className="w-4 h-3 border rounded-sm relative"
-              style={{ borderColor: currentTheme.textColor === 'light' ? '#ffffff' : '#111827' }}
-            >
-              <div 
-                className="absolute inset-0.5 rounded-sm"
-                style={{ backgroundColor: currentTheme.textColor === 'light' ? '#ffffff' : '#111827' }}
-              />
-            </div>
-          </div>
-        </div>
-
         {/* Header - Hide on book detail and badges */}
         {currentView !== 'book-detail' && currentView !== 'badges' && currentView !== 'goals' && (
           <header 
@@ -846,7 +822,7 @@ function AppContent() {
         {/* Bottom Navigation - Hide on book detail and badges */}
         {currentView !== 'book-detail' && currentView !== 'badges' && currentView !== 'goals' && (
           <nav 
-            className="absolute bottom-0 left-0 right-0 border-t safe-bottom"
+            className="fixed bottom-0 left-1/2 z-40 w-full max-w-[430px] -translate-x-1/2 border-t safe-bottom md:absolute md:left-0 md:right-0 md:max-w-none md:translate-x-0"
             style={{
               backgroundColor: currentTheme.cardColor,
               borderTopColor: currentTheme.borderColor,
