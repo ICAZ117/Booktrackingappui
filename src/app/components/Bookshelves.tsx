@@ -1,4 +1,4 @@
-import { Sparkles, Heart, Trophy, Bookmark, XCircle, Library, Star, BookOpen, User, TrendingUp, Calendar, ChevronRight, Plus, Settings, Flame, Zap, Music, Globe } from 'lucide-react';
+import { Sparkles, Heart, Trophy, Bookmark, XCircle, Library, Star, BookOpen, User, TrendingUp, Calendar, ChevronRight, Plus, Settings, Flame, Zap, Music, Globe, EyeOff, Eye } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { BookDetailModal } from './BookDetailModal';
@@ -25,6 +25,16 @@ export function Bookshelves({ onBookSelect }: BookshelvesProps) {
   const [showCreateShelf, setShowCreateShelf] = useState(false);
   const [customShelves, setCustomShelves] = useState<any[]>([]);
   const [contextShelfId, setContextShelfId] = useState<string | null>(null); // Track which shelf context we're in
+  const [hiddenShelfIds, setHiddenShelfIds] = useState<string[]>(() => {
+    const saved = localStorage.getItem('readtrack_hidden_shelves');
+    if (!saved) return [];
+    try {
+      const parsed = JSON.parse(saved);
+      return Array.isArray(parsed) ? parsed.filter((id) => typeof id === 'string') : [];
+    } catch {
+      return [];
+    }
+  });
   
   // Profile state
   const [username, setUsername] = useState('@bookworm2026');
@@ -45,6 +55,10 @@ export function Bookshelves({ onBookSelect }: BookshelvesProps) {
       localStorage.setItem('readtrack_custom_shelves', JSON.stringify(customShelves));
     }
   }, [customShelves]);
+
+  useEffect(() => {
+    localStorage.setItem('readtrack_hidden_shelves', JSON.stringify(hiddenShelfIds));
+  }, [hiddenShelfIds]);
 
   // Load profile data from localStorage
   useEffect(() => {
@@ -109,6 +123,132 @@ export function Bookshelves({ onBookSelect }: BookshelvesProps) {
     setCustomShelves([...customShelves, newShelf]);
     setShowCreateShelf(false);
   };
+
+  const SHELF_PREVIEW_SLOT_COUNT = 6;
+  const SHELF_PREVIEW_GAP_PX = 8;
+  const previewBookWidth = `calc((100% - ${(SHELF_PREVIEW_SLOT_COUNT - 1) * SHELF_PREVIEW_GAP_PX}px) / ${SHELF_PREVIEW_SLOT_COUNT})`;
+  const SHELF_SELECTION_KEY_PREFIX = 'readtrack_shelf_display_selection_';
+
+  const getShelfPreviewBooks = (shelfId: string, shelfBooks: any[]) => {
+    if (shelfBooks.length <= SHELF_PREVIEW_SLOT_COUNT) return shelfBooks.slice(0, SHELF_PREVIEW_SLOT_COUNT);
+
+    const raw = localStorage.getItem(`${SHELF_SELECTION_KEY_PREFIX}${shelfId}`);
+    if (!raw) return shelfBooks.slice(0, SHELF_PREVIEW_SLOT_COUNT);
+
+    try {
+      const parsed = JSON.parse(raw);
+      const selectedIds = Array.isArray(parsed)
+        ? parsed.filter((id) => typeof id === 'string').slice(0, SHELF_PREVIEW_SLOT_COUNT)
+        : [];
+      if (selectedIds.length === 0) return shelfBooks.slice(0, SHELF_PREVIEW_SLOT_COUNT);
+      const selected = selectedIds
+        .map((id) => shelfBooks.find((book) => book.id === id))
+        .filter(Boolean);
+      const ordered = [...selected, ...shelfBooks.filter((book) => !selectedIds.includes(book.id))];
+      return ordered.slice(0, SHELF_PREVIEW_SLOT_COUNT);
+    } catch {
+      return shelfBooks.slice(0, SHELF_PREVIEW_SLOT_COUNT);
+    }
+  };
+
+  const renderShelfTile = ({
+    id,
+    name,
+    icon: Icon,
+    color,
+    count,
+    previewBooks,
+    onClick,
+    canHide = true,
+  }: {
+    id: string;
+    name: string;
+    icon: any;
+    color: string;
+    count: number;
+    previewBooks: any[];
+    onClick: () => void;
+    canHide?: boolean;
+  }) => (
+    <button
+      key={id}
+      className="w-full rounded-2xl p-4 border transition-colors text-left"
+      style={{
+        backgroundColor: currentTheme.cardColor,
+        borderColor: currentTheme.borderColor,
+      }}
+      onClick={onClick}
+    >
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className={`p-2 rounded-lg bg-gradient-to-br ${color}`}>
+            <Icon className="w-4 h-4 text-white" />
+          </div>
+          <span
+            className="font-semibold text-sm truncate"
+            style={{ color: currentTheme.textColor === 'light' ? '#f3f4f6' : '#111827' }}
+          >
+            {name}
+          </span>
+        </div>
+        <div className="flex items-center gap-2 ml-2">
+          <span
+            className="text-sm font-bold"
+            style={{ color: currentTheme.textColor === 'light' ? '#f3f4f6' : '#111827' }}
+          >
+            {count}
+          </span>
+          {canHide && (
+            <button
+              onClick={(event) => {
+                event.stopPropagation();
+                setHiddenShelfIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+              }}
+              className="p-1.5 rounded-md transition-colors"
+              style={{
+                backgroundColor: currentTheme.textColor === 'light' ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.08)',
+                color: currentTheme.textColor === 'light' ? '#94a3b8' : '#6b7280',
+              }}
+              title="Hide shelf"
+            >
+              <EyeOff className="w-3.5 h-3.5" />
+            </button>
+          )}
+          <ChevronRight className="w-4 h-4" style={{ color: currentTheme.textColor === 'light' ? '#9ca3af' : '#6b7280' }} />
+        </div>
+      </div>
+
+      {previewBooks.length > 0 ? (
+        <div className="mt-3">
+          <div className="flex items-end gap-2 overflow-hidden">
+            {previewBooks.slice(0, SHELF_PREVIEW_SLOT_COUNT).map((book) => (
+              <div
+                key={`${id}-${book.id}`}
+                className="relative aspect-[2/3] rounded-none overflow-hidden shadow-md"
+                style={{ width: previewBookWidth }}
+              >
+                <BookCover src={book.cover} alt={book.title} className="w-full h-full object-cover" />
+              </div>
+            ))}
+          </div>
+          <div
+            className="h-2 rounded-full -mt-[1px]"
+            style={{
+              background: 'linear-gradient(180deg, #6b4f3a 0%, #4a3626 100%)',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.35)',
+            }}
+          />
+        </div>
+      ) : (
+        <p
+          className="text-xs mt-3"
+          style={{ color: currentTheme.textColor === 'light' ? '#9ca3af' : '#6b7280' }}
+        >
+          No books on this shelf yet
+        </p>
+      )}
+    </button>
+  );
 
   // Enrich bookshelves with UI properties AND books
   const enrichedShelves = bookshelves
@@ -180,15 +320,101 @@ export function Bookshelves({ onBookSelect }: BookshelvesProps) {
     setSelectedShelf(null);
   };
 
+  const syncSelectedShelfBooks = (shelfId: string, nextBookIds: string[]) => {
+    setSelectedShelf((prev) => {
+      if (!prev || prev.id !== shelfId) return prev;
+      return {
+        ...prev,
+        bookIds: nextBookIds,
+        books: books.filter((book) => nextBookIds.includes(book.id)),
+      };
+    });
+  };
+
+  const updateShelfBookIds = async (
+    shelfId: string,
+    updater: (currentIds: string[]) => string[],
+  ) => {
+    const defaultShelf = bookshelves.find((shelf) => shelf.id === shelfId);
+    if (defaultShelf) {
+      const nextBookIds = updater(defaultShelf.bookIds || []);
+      const updatedShelves = bookshelves.map((shelf) =>
+        shelf.id === shelfId ? { ...shelf, bookIds: nextBookIds } : shelf,
+      );
+      await updateBookshelves(updatedShelves);
+      syncSelectedShelfBooks(shelfId, nextBookIds);
+      return;
+    }
+
+    if (shelfId.startsWith('custom-')) {
+      let nextIdsForSelected: string[] = [];
+      const updatedCustomShelves = customShelves.map((shelf) => {
+        if (shelf.id !== shelfId) return shelf;
+        const currentIds: string[] = shelf.bookIds || [];
+        nextIdsForSelected = updater(currentIds);
+        return {
+          ...shelf,
+          bookIds: nextIdsForSelected,
+        };
+      });
+      setCustomShelves(updatedCustomShelves);
+      localStorage.setItem('readtrack_custom_shelves', JSON.stringify(updatedCustomShelves));
+      syncSelectedShelfBooks(shelfId, nextIdsForSelected);
+    }
+  };
+
+  const toggleBookInShelf = async (shelfId: string, bookId: string) => {
+    if (!shelfId || shelfId === 'finished') return;
+    await updateShelfBookIds(shelfId, (currentIds) => {
+      const isInShelf = currentIds.includes(bookId);
+      return isInShelf ? currentIds.filter((id) => id !== bookId) : [...currentIds, bookId];
+    });
+  };
+
+  const removeBookFromShelf = async (shelfId: string, bookId: string) => {
+    if (!shelfId || shelfId === 'finished') return;
+    await updateShelfBookIds(shelfId, (currentIds) => currentIds.filter((id) => id !== bookId));
+  };
+
+  const moveBookToShelf = async (fromShelfId: string, bookId: string, targetShelfId: string) => {
+    if (!targetShelfId || targetShelfId === fromShelfId) return;
+
+    if (fromShelfId !== 'finished') {
+      await updateShelfBookIds(fromShelfId, (currentIds) => currentIds.filter((id) => id !== bookId));
+    }
+
+    await updateShelfBookIds(targetShelfId, (currentIds) =>
+      currentIds.includes(bookId) ? currentIds : [...currentIds, bookId],
+    );
+  };
+
+  const addBookToShelf = async (bookId: string, targetShelfId: string) => {
+    if (!targetShelfId) return;
+    await updateShelfBookIds(targetShelfId, (currentIds) =>
+      currentIds.includes(bookId) ? currentIds : [...currentIds, bookId],
+    );
+  };
+
   // If a shelf is selected, show the detail view
   if (selectedShelf) {
     return (
       <>
         <ShelfDetailView
           shelf={selectedShelf}
+          allBooks={books}
           onBack={closeShelfDetail}
           onBookClick={openBookDetailModal}
           onAddBook={() => openAddBookModal(selectedShelf.id)}
+          onToggleBookInShelf={(bookId) => toggleBookInShelf(selectedShelf.id, bookId)}
+          onRemoveBookFromShelf={(bookId) => removeBookFromShelf(selectedShelf.id, bookId)}
+          onMoveBookToShelf={(bookId, targetShelfId) => moveBookToShelf(selectedShelf.id, bookId, targetShelfId)}
+          onAddBookToShelf={(bookId, targetShelfId) => addBookToShelf(bookId, targetShelfId)}
+          availableShelves={[
+            ...bookshelves.map((shelf) => ({ id: shelf.id, name: shelf.name })),
+            ...customShelves.map((shelf) => ({ id: shelf.id, name: shelf.name })),
+          ]}
+          showSuggestions={!['finished', 'recently-read', 'dnf'].includes(selectedShelf.id)}
+          canModifyShelf={selectedShelf.id !== 'finished'}
         />
         
         {/* Modals need to be rendered even in shelf detail view */}
@@ -558,70 +784,110 @@ export function Bookshelves({ onBookSelect }: BookshelvesProps) {
         </h2>
         <div className="space-y-2">
           {enrichedShelves.map((shelf) => {
-            const Icon = shelf.icon;
-            return (
-              <button
-                key={shelf.id}
-                className="w-full bg-white rounded-xl p-4 border border-gray-100 flex items-center justify-between hover:border-gray-300 transition-colors"
-                onClick={() => openShelfDetail(shelf)}
-              >
-                <div className="flex items-center gap-3">
-                  <div className={`p-2 rounded-lg bg-gradient-to-br ${shelf.color}`}>
-                    <Icon className="w-4 h-4 text-white" />
-                  </div>
-                  <span className="font-semibold text-sm text-gray-900">{shelf.name}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-bold text-gray-900">{shelf.bookIds.length}</span>
-                  <ChevronRight className="w-4 h-4 text-gray-400" />
-                </div>
-              </button>
-            );
+            if (hiddenShelfIds.includes(shelf.id)) return null;
+            return renderShelfTile({
+              id: shelf.id,
+              name: shelf.name,
+              icon: shelf.icon,
+              color: shelf.color,
+              count: shelf.bookIds.length,
+              previewBooks: getShelfPreviewBooks(shelf.id, shelf.books || []),
+              onClick: () => openShelfDetail(shelf),
+            });
           })}
           
           {/* Custom Shelves */}
           {customShelves.map((shelf) => {
+            if (hiddenShelfIds.includes(shelf.id)) return null;
             const Icon = getIconComponent(shelf.icon);
-            return (
-              <button
-                key={shelf.id}
-                className="w-full bg-white rounded-xl p-4 border border-gray-100 flex items-center justify-between hover:border-gray-300 transition-colors"
-                onClick={() => openShelfDetail({
+            const shelfBooks = books.filter((b) => shelf.bookIds.includes(b.id));
+            return renderShelfTile({
+              id: shelf.id,
+              name: shelf.name,
+              icon: Icon,
+              color: shelf.color,
+              count: shelf.bookIds.length,
+              previewBooks: getShelfPreviewBooks(shelf.id, shelfBooks),
+              onClick: () =>
+                openShelfDetail({
                   ...shelf,
                   icon: Icon,
-                  books: books.filter(b => shelf.bookIds.includes(b.id)),
-                })}
-              >
-                <div className="flex items-center gap-3">
-                  <div className={`p-2 rounded-lg bg-gradient-to-br ${shelf.color}`}>
-                    <Icon className="w-4 h-4 text-white" />
-                  </div>
-                  <span className="font-semibold text-sm text-gray-900">{shelf.name}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-bold text-gray-900">{shelf.bookIds.length}</span>
-                  <ChevronRight className="w-4 h-4 text-gray-400" />
-                </div>
-              </button>
-            );
+                  books: shelfBooks,
+                }),
+            });
           })}
 
           {/* Read Books - All Time */}
-          <button 
-            onClick={() => openShelfDetail({ id: 'finished', name: 'Read Books', books: books.filter(b => b.status === 'finished'), icon: BookOpen, color: 'from-green-400 to-emerald-600' })}
-            className="w-full bg-white rounded-xl p-4 border border-gray-100 flex items-center justify-between hover:border-gray-300 transition-colors"
-          >
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-gradient-to-br from-green-400 to-emerald-600">
-                <BookOpen className="w-4 h-4 text-white" />
+          {(() => {
+            if (hiddenShelfIds.includes('finished')) return null;
+            const finishedBooks = books.filter((b) => b.status === 'finished');
+            return renderShelfTile({
+              id: 'finished',
+              name: 'Read Books',
+              icon: BookOpen,
+              color: 'from-green-400 to-emerald-600',
+              count: finishedBooks.length,
+              previewBooks: getShelfPreviewBooks('finished', finishedBooks),
+              onClick: () =>
+                openShelfDetail({
+                  id: 'finished',
+                  name: 'Read Books',
+                  books: finishedBooks,
+                  icon: BookOpen,
+                  color: 'from-green-400 to-emerald-600',
+                }),
+            });
+          })()}
+
+          {hiddenShelfIds.length > 0 && (
+            <div
+              className="rounded-xl p-3 border"
+              style={{
+                borderColor: currentTheme.textColor === 'light' ? '#374151' : '#d1d5db',
+                backgroundColor: currentTheme.textColor === 'light' ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)',
+              }}
+            >
+              <div
+                className="text-xs font-semibold mb-2 flex items-center gap-1.5"
+                style={{
+                  color: currentTheme.textColor === 'light' ? '#cbd5e1' : '#4b5563',
+                }}
+              >
+                <Eye className="w-3.5 h-3.5" />
+                Hidden Shelves
               </div>
-              <span className="font-semibold text-sm text-gray-900">Read Books</span>
+              <div className="space-y-2">
+                {hiddenShelfIds.map((id) => {
+                  const foundDefault = enrichedShelves.find((shelf) => shelf.id === id);
+                  const foundCustom = customShelves.find((shelf) => shelf.id === id);
+                  const label =
+                    foundDefault?.name ||
+                    foundCustom?.name ||
+                    (id === 'finished' ? 'Read Books' : id);
+                  return (
+                    <div key={`hidden-${id}`} className="flex items-center justify-between">
+                      <span
+                        className="text-xs"
+                        style={{ color: currentTheme.textColor === 'light' ? '#94a3b8' : '#6b7280' }}
+                      >
+                        {label}
+                      </span>
+                      <button
+                        onClick={() => setHiddenShelfIds((prev) => prev.filter((shelfId) => shelfId !== id))}
+                        className="text-xs font-semibold px-2 py-1 rounded-md"
+                        style={{
+                          color: currentTheme.accentColor,
+                          backgroundColor: `${currentTheme.accentColor}18`,
+                        }}
+                      >
+                        Unhide
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-bold text-gray-900">{books.filter(b => b.status === 'finished').length}</span>
-              <ChevronRight className="w-4 h-4 text-gray-400" />
-            </div>
-          </button>
+          )}
           
           {/* Create Shelf Button */}
           <button

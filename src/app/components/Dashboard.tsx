@@ -1,4 +1,4 @@
-import { Book, Flame, Headphones, BookOpen, TrendingUp, Calendar, Sparkles, Award, AlertCircle, Zap, Heart, Check, Settings, Target, Plus, ChevronRight, Upload, Edit2, Smartphone, PieChart, Clock } from 'lucide-react';
+import { Book, Flame, Headphones, BookOpen, TrendingUp, Calendar, Sparkles, Award, AlertCircle, Zap, Heart, Check, Settings, Target, Plus, ChevronRight, Upload, Edit2, Smartphone, PieChart, Clock, Star, ArrowLeft } from 'lucide-react';
 import { StatCard } from './StatCard';
 import { BookCard } from './BookCard';
 import { BookCover } from './BookCover';
@@ -43,6 +43,8 @@ type DiscoveryBook = {
   reason?: string;
 };
 
+const FAVORITES_SHELF_SELECTION_KEY = 'readtrack_favorites_shelf_selection_ids';
+
 const normalizeText = (value?: string) => (value || '').toLowerCase().replace(/\s+/g, ' ').trim();
 const normalizeIsbn = (value?: string) => (value || '').replace(/[^0-9x]/gi, '').toLowerCase();
 
@@ -75,6 +77,19 @@ export function Dashboard({ onBookSelect, onNavigate, onOpenImport, onBookFinish
   const [onNavigateToBadges, setOnNavigateToBadges] = useState<(() => void) | undefined>(undefined);
   const [showDataFix, setShowDataFix] = useState(false);
   const [customShelves, setCustomShelves] = useState<any[]>([]);
+  const [showFavoritesManager, setShowFavoritesManager] = useState(false);
+  const [showFavoritesLibraryPicker, setShowFavoritesLibraryPicker] = useState(false);
+  const [showShelfPicker, setShowShelfPicker] = useState(false);
+  const [shelfDisplayFavoriteIds, setShelfDisplayFavoriteIds] = useState<string[]>(() => {
+    const saved = localStorage.getItem(FAVORITES_SHELF_SELECTION_KEY);
+    if (!saved) return [];
+    try {
+      const parsed = JSON.parse(saved);
+      return Array.isArray(parsed) ? parsed.filter((id) => typeof id === 'string').slice(0, 6) : [];
+    } catch {
+      return [];
+    }
+  });
   const [popularBooks, setPopularBooks] = useState<DiscoveryBook[]>([]);
   const [popularBooksSource, setPopularBooksSource] = useState<'nyt' | 'live-trending'>('live-trending');
   const [popularBooksFetchedAt, setPopularBooksFetchedAt] = useState<string>('');
@@ -809,6 +824,59 @@ export function Dashboard({ onBookSelect, onNavigate, onOpenImport, onBookFinish
     customShelves.some((shelf) => (shelf.bookIds || []).length > 0);
   const shouldShowPersonalizedRecommendations = books.length > 0 || hasAnyShelvedBooks;
 
+  const favoritesShelf = bookshelves.find((shelf) => shelf.id === 'favorites');
+  const favoriteBookIds = favoritesShelf?.bookIds || [];
+  const favoriteBooks = favoriteBookIds
+    .map((bookId) => books.find((book) => book.id === bookId))
+    .filter((book): book is NonNullable<typeof book> => Boolean(book));
+  const hasOverflowFavorites = favoriteBooks.length > 6;
+  const selectedShelfFavorites = shelfDisplayFavoriteIds
+    .map((id) => favoriteBooks.find((book) => book.id === id))
+    .filter((book): book is NonNullable<typeof book> => Boolean(book));
+  const shelfBooksToDisplay = hasOverflowFavorites
+    ? (
+        selectedShelfFavorites.length > 0
+          ? [...selectedShelfFavorites, ...favoriteBooks.filter((book) => !shelfDisplayFavoriteIds.includes(book.id))]
+          : favoriteBooks
+      ).slice(0, 6)
+    : favoriteBooks.slice(0, 6);
+  const suggestedBooks = books.filter((book) => !favoriteBookIds.includes(book.id)).slice(0, 8);
+  const additionalLibraryBooks = books.filter((book) => !favoriteBookIds.includes(book.id)).slice(8);
+  const FAVORITES_SHELF_SLOT_COUNT = 6;
+  const FAVORITES_SHELF_GAP_PX = 12;
+  const fixedShelfBookWidth = `calc((100% - ${(FAVORITES_SHELF_SLOT_COUNT - 1) * FAVORITES_SHELF_GAP_PX}px) / ${FAVORITES_SHELF_SLOT_COUNT})`;
+
+  const saveFavoritesShelf = async (nextBookIds: string[]) => {
+    const updatedShelves = favoritesShelf
+      ? bookshelves.map((shelf) => (shelf.id === 'favorites' ? { ...shelf, bookIds: nextBookIds } : shelf))
+      : [...bookshelves, { id: 'favorites', name: 'Favorites', bookIds: nextBookIds }];
+    await updateBookshelves(updatedShelves);
+  };
+
+  const toggleFavorite = async (bookId: string) => {
+    const isFavorite = favoriteBookIds.includes(bookId);
+    const nextIds = isFavorite
+      ? favoriteBookIds.filter((id) => id !== bookId)
+      : [...favoriteBookIds, bookId];
+    await saveFavoritesShelf(nextIds);
+  };
+
+  const toggleShelfDisplayBook = (bookId: string) => {
+    setShelfDisplayFavoriteIds((prev) => {
+      if (prev.includes(bookId)) return prev.filter((id) => id !== bookId);
+      if (prev.length >= 6) return prev;
+      return [...prev, bookId];
+    });
+  };
+
+  useEffect(() => {
+    localStorage.setItem(FAVORITES_SHELF_SELECTION_KEY, JSON.stringify(shelfDisplayFavoriteIds));
+  }, [shelfDisplayFavoriteIds]);
+
+  useEffect(() => {
+    setShelfDisplayFavoriteIds((prev) => prev.filter((id) => favoriteBookIds.includes(id)).slice(0, 6));
+  }, [favoriteBookIds]);
+
   return (
     <div className="space-y-6">
       {/* Theme Picker */}
@@ -923,6 +991,87 @@ export function Dashboard({ onBookSelect, onNavigate, onOpenImport, onBookFinish
         <div className="absolute right-4 bottom-4 opacity-10">
           <Book className="w-24 h-24" style={{ color: '#ffffff' }} />
         </div>
+      </motion.div>
+
+      {/* Favorites Shelf */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.08 }}
+        className="rounded-2xl p-5 shadow-lg"
+        style={{
+          backgroundColor: currentTheme.cardColor,
+          borderColor: currentTheme.borderColor,
+          borderWidth: '1px',
+        }}
+      >
+        <div className="flex items-start justify-between gap-3 mb-4">
+          <div>
+            <h3
+              className="text-lg font-bold flex items-center gap-2"
+              style={{ color: currentTheme.textColor === 'light' ? '#f3f4f6' : '#111827' }}
+            >
+              <Star className="w-4 h-4 text-amber-400 fill-amber-400" />
+              Favorites
+              <Star className="w-4 h-4 text-amber-400 fill-amber-400" />
+            </h3>
+            <p
+              className="text-xs mt-1"
+              style={{ color: currentTheme.textColor === 'light' ? '#9ca3af' : '#6b7280' }}
+            >
+              {favoriteBooks.length === 0
+                ? 'Add favorites from View all favorites'
+                : `Showing ${Math.min(favoriteBooks.length, 6)} of ${favoriteBooks.length} favorites`}
+            </p>
+          </div>
+          <button
+            onClick={() => setShowFavoritesManager(true)}
+            className="text-xs font-semibold px-3 py-1.5 rounded-lg"
+            style={{
+              color: currentTheme.accentColor,
+              backgroundColor: `${currentTheme.accentColor}18`,
+            }}
+          >
+            View all favorites
+          </button>
+        </div>
+
+        {favoriteBooks.length === 0 ? (
+          <button
+            onClick={() => setShowFavoritesManager(true)}
+            className="w-full rounded-xl p-4 border-2 border-dashed text-sm font-semibold"
+            style={{
+              borderColor: currentTheme.borderColor,
+              color: currentTheme.textColor === 'light' ? '#9ca3af' : '#6b7280',
+            }}
+          >
+            Choose favorites from your library
+          </button>
+        ) : (
+          <div>
+            <div className="flex items-end gap-3 overflow-hidden relative z-10">
+              {shelfBooksToDisplay.map((book) => (
+                <button
+                  key={book.id}
+                  onClick={() => handleBookClick(book)}
+                  className="relative aspect-[2/3] rounded-none overflow-hidden shadow-md"
+                  style={{
+                    width: fixedShelfBookWidth,
+                  }}
+                >
+                  <BookCover src={book.cover} alt={book.title} className="w-full h-full object-cover" />
+                </button>
+              ))}
+            </div>
+            <div
+              className="h-2 rounded-full -mt-[1px] relative z-0"
+              style={{
+                background: 'linear-gradient(180deg, #6b4f3a 0%, #4a3626 100%)',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.35)',
+              }}
+            />
+          </div>
+        )}
       </motion.div>
 
       {/* Reading Stories - Instagram Style */}
@@ -2152,6 +2301,229 @@ export function Dashboard({ onBookSelect, onNavigate, onOpenImport, onBookFinish
             ) : null}
           </p>
         </motion.div>
+      )}
+
+      {/* Favorites Manager Modal */}
+      {showFavoritesManager && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-3 sm:p-6">
+          <button
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => {
+              setShowFavoritesManager(false);
+              setShowFavoritesLibraryPicker(false);
+              setShowShelfPicker(false);
+            }}
+            aria-label="Close favorites manager"
+          />
+          <motion.div
+            initial={{ opacity: 0, y: 24 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="relative w-full max-w-3xl max-h-[90vh] rounded-3xl p-4 sm:p-5 overflow-hidden shadow-2xl"
+            style={{
+              backgroundColor: '#111318',
+              borderColor: currentTheme.borderColor,
+              borderWidth: '1px',
+            }}
+          >
+            <div
+              className="rounded-3xl p-4 sm:p-5 mb-4"
+              style={{
+                background: 'linear-gradient(120deg, #3298ff 0%, #f83aef 100%)',
+              }}
+            >
+              <div className="flex items-center justify-between">
+                <button
+                  onClick={() => {
+                    setShowFavoritesManager(false);
+                    setShowFavoritesLibraryPicker(false);
+                    setShowShelfPicker(false);
+                  }}
+                  className="w-10 h-10 rounded-2xl flex items-center justify-center"
+                  style={{ backgroundColor: 'rgba(255,255,255,0.18)' }}
+                >
+                  <ArrowLeft className="w-5 h-5 text-white" />
+                </button>
+                <div className="flex-1 px-3">
+                  <h3 className="text-2xl font-bold text-white">Favorites</h3>
+                  <p className="text-sm text-white/80">{favoriteBooks.length} books</p>
+                </div>
+                <button
+                  onClick={() => setShowFavoritesLibraryPicker((prev) => !prev)}
+                  className="w-10 h-10 rounded-2xl flex items-center justify-center"
+                  style={{ backgroundColor: 'rgba(255,255,255,0.18)' }}
+                >
+                  <Plus className="w-5 h-5 text-white" />
+                </button>
+              </div>
+            </div>
+
+            <div className="max-h-[48vh] overflow-y-auto pr-1">
+              <p className="text-xs mb-3 text-slate-400">
+                Favorites are automatically added to your shelf.
+              </p>
+              {hasOverflowFavorites && (
+                <button
+                  onClick={() => setShowShelfPicker((prev) => !prev)}
+                  className="w-full mb-3 rounded-lg px-3 py-2 text-xs font-semibold border"
+                  style={{
+                    borderColor: showShelfPicker ? '#fbbf24' : '#2a2f3a',
+                    color: showShelfPicker ? '#fbbf24' : '#cbd5e1',
+                    backgroundColor: showShelfPicker ? 'rgba(251,191,36,0.08)' : 'transparent',
+                  }}
+                >
+                  {showShelfPicker
+                    ? `Picking shelf books (${shelfDisplayFavoriteIds.length}/6)`
+                    : 'Pick your books to show on your shelf'}
+                </button>
+              )}
+
+              {favoriteBooks.length === 0 && (
+                <div
+                  className="rounded-xl p-3 text-sm mb-4"
+                  style={{
+                    borderColor: '#2a2f3a',
+                    borderWidth: '1px',
+                    color: '#94a3b8',
+                  }}
+                >
+                  No favorites yet. Use the + button to add books.
+                </div>
+              )}
+
+              {favoriteBooks.length > 0 && (
+                <div className="flex flex-wrap gap-4 mb-5">
+                  {favoriteBooks.map((book) => {
+                    const displayRating =
+                      typeof book.rating === 'number'
+                        ? book.rating
+                        : typeof book.averageRating === 'number'
+                          ? Number(book.averageRating.toFixed(2))
+                          : null;
+                    const isOnShelf = shelfBooksToDisplay.some((shelfBook) => shelfBook.id === book.id);
+                    const isShelfPicked = shelfDisplayFavoriteIds.includes(book.id);
+                    const canAddToShelf = isShelfPicked || shelfDisplayFavoriteIds.length < 6;
+
+                    return (
+                    <div key={`fav-card-${book.id}`} className="w-[158px]">
+                      <button
+                        onClick={() => handleBookClick(book)}
+                        className="relative w-full aspect-[2/3] rounded-xl overflow-hidden shadow-md mb-2"
+                      >
+                        <BookCover src={book.cover} alt={book.title} className="w-full h-full object-cover" />
+                        {displayRating !== null && (
+                          <div className="absolute right-2 bottom-2 inline-flex items-center gap-1 rounded-full px-2 py-1 bg-black/80 text-amber-100 text-xs font-semibold">
+                            <Star className="w-3.5 h-3.5 text-yellow-400 fill-yellow-400" />
+                            <span>
+                              {Number.isInteger(displayRating) ? displayRating : displayRating.toFixed(2)}
+                            </span>
+                          </div>
+                        )}
+                      </button>
+                      <div className="text-[13px] leading-tight font-semibold text-slate-100 line-clamp-1">{book.title}</div>
+                      <div className="text-[11px] text-slate-400 line-clamp-1 mb-2">{book.author}</div>
+                      {hasOverflowFavorites && showShelfPicker ? (
+                        <button
+                          onClick={() => toggleShelfDisplayBook(book.id)}
+                          disabled={!canAddToShelf}
+                          className="w-full rounded-lg px-2.5 py-1.5 text-xs font-semibold border"
+                          style={{
+                            borderColor: isShelfPicked ? '#fbbf24' : '#2a2f3a',
+                            color: isShelfPicked ? '#fbbf24' : '#cbd5e1',
+                            backgroundColor: isShelfPicked ? 'rgba(251,191,36,0.08)' : 'transparent',
+                            opacity: canAddToShelf ? 1 : 0.55,
+                          }}
+                        >
+                          {isShelfPicked ? 'Remove from shelf' : 'Add to shelf'}
+                        </button>
+                      ) : hasOverflowFavorites ? (
+                        <div className="text-[11px] text-slate-500">
+                          {isOnShelf ? 'Currently shown on shelf' : 'Not currently shown on shelf'}
+                        </div>
+                      ) : null}
+                    </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div className="text-xs font-semibold text-slate-300 mb-2">Suggestions to add to favorites</div>
+              <div className="space-y-2 mb-4">
+                {suggestedBooks.length === 0 && (
+                  <div className="text-xs text-slate-500">All your books are already in favorites.</div>
+                )}
+                {suggestedBooks.map((book) => (
+                  <div
+                    key={`favorite-suggestion-${book.id}`}
+                    className="rounded-xl p-2.5 flex items-center gap-3"
+                    style={{
+                      borderColor: '#2a2f3a',
+                      borderWidth: '1px',
+                    }}
+                  >
+                    <div className="w-10 h-14 rounded overflow-hidden flex-shrink-0">
+                      <BookCover src={book.cover} alt={book.title} className="w-full h-full object-cover" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-semibold text-slate-100 line-clamp-1">{book.title}</div>
+                      <div className="text-xs text-slate-400 line-clamp-1">{book.author}</div>
+                    </div>
+                    <button
+                      onClick={() => toggleFavorite(book.id)}
+                      className="rounded-lg px-2.5 py-1.5 text-xs font-semibold border"
+                      style={{
+                        borderColor: '#2a2f3a',
+                        color: '#cbd5e1',
+                        backgroundColor: 'transparent',
+                      }}
+                    >
+                      Add favorite
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              {showFavoritesLibraryPicker && (
+                <>
+                  <div className="text-xs font-semibold text-slate-300 mb-2">More from library</div>
+                  <div className="space-y-2">
+                    {additionalLibraryBooks.map((book) => {
+                      const isFavorite = favoriteBookIds.includes(book.id);
+                      return (
+                        <div
+                          key={`favorite-toggle-${book.id}`}
+                          className="rounded-xl p-2.5 flex items-center gap-3"
+                          style={{
+                            borderColor: '#2a2f3a',
+                            borderWidth: '1px',
+                          }}
+                        >
+                          <div className="w-10 h-14 rounded overflow-hidden flex-shrink-0">
+                            <BookCover src={book.cover} alt={book.title} className="w-full h-full object-cover" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="text-sm font-semibold text-slate-100 line-clamp-1">{book.title}</div>
+                            <div className="text-xs text-slate-400 line-clamp-1">{book.author}</div>
+                          </div>
+                          <button
+                            onClick={() => toggleFavorite(book.id)}
+                            className="rounded-lg px-2.5 py-1.5 text-xs font-semibold border"
+                            style={{
+                              borderColor: isFavorite ? '#f59e0b' : '#2a2f3a',
+                              color: isFavorite ? '#f59e0b' : '#cbd5e1',
+                              backgroundColor: isFavorite ? 'rgba(245,158,11,0.14)' : 'transparent',
+                            }}
+                          >
+                            {isFavorite ? 'Remove favorite' : 'Add favorite'}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+          </motion.div>
+        </div>
       )}
 
       {/* Book Detail Modal */}

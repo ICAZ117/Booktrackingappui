@@ -1,14 +1,15 @@
-import { ArrowLeft, Star, Plus } from 'lucide-react';
+import { ArrowLeft, Star, Plus, ChevronDown, PencilLine, X } from 'lucide-react';
 import { motion } from 'motion/react';
-import { useTheme } from '../contexts/ThemeContext';
+import { useEffect, useState } from 'react';
 import { BookCover } from './BookCover';
 
 interface Book {
+  id: string;
   title: string;
   author: string;
   cover: string;
   rating?: number;
-  notes?: string;
+  averageRating?: number;
 }
 
 interface ShelfDetailViewProps {
@@ -19,129 +20,364 @@ interface ShelfDetailViewProps {
     color: string;
     books: Book[];
   };
+  allBooks: Book[];
   onBack: () => void;
   onBookClick: (book: Book) => void;
   onAddBook?: () => void;
+  onToggleBookInShelf?: (bookId: string) => void;
+  onRemoveBookFromShelf?: (bookId: string) => void;
+  onMoveBookToShelf?: (bookId: string, targetShelfId: string) => void;
+  onAddBookToShelf?: (bookId: string, targetShelfId: string) => void;
+  availableShelves?: { id: string; name: string }[];
+  showSuggestions?: boolean;
+  canModifyShelf?: boolean;
 }
 
-export function ShelfDetailView({ shelf, onBack, onBookClick, onAddBook }: ShelfDetailViewProps) {
-  const { currentTheme } = useTheme();
-  const Icon = shelf.icon;
+const SHELF_SELECTION_KEY_PREFIX = 'readtrack_shelf_display_selection_';
 
-  const getGradientBg = () => {
-    return currentTheme.isGradient
-      ? `linear-gradient(135deg, ${currentTheme.primary} 0%, ${currentTheme.secondary} 100%)`
-      : currentTheme.primary;
+export function ShelfDetailView({
+  shelf,
+  allBooks,
+  onBack,
+  onBookClick,
+  onAddBook,
+  onToggleBookInShelf,
+  onRemoveBookFromShelf,
+  onMoveBookToShelf,
+  onAddBookToShelf,
+  availableShelves = [],
+  showSuggestions = true,
+  canModifyShelf = true,
+}: ShelfDetailViewProps) {
+  const shelfBookIds = new Set(shelf.books.map((book) => book.id));
+  const suggestedBooks = allBooks.filter((book) => !shelfBookIds.has(book.id)).slice(0, 10);
+  const hasOverflowShelf = shelf.books.length > 6;
+  const [showShelfPicker, setShowShelfPicker] = useState(false);
+  const [shelfDisplayIds, setShelfDisplayIds] = useState<string[]>([]);
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [openMenuBookId, setOpenMenuBookId] = useState<string | null>(null);
+  const [showMoveTargetsForBookId, setShowMoveTargetsForBookId] = useState<string | null>(null);
+  const [showAddTargetsForBookId, setShowAddTargetsForBookId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const raw = localStorage.getItem(`${SHELF_SELECTION_KEY_PREFIX}${shelf.id}`);
+    if (!raw) {
+      setShelfDisplayIds([]);
+      return;
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      setShelfDisplayIds(Array.isArray(parsed) ? parsed.filter((id) => typeof id === 'string').slice(0, 6) : []);
+    } catch {
+      setShelfDisplayIds([]);
+    }
+  }, [shelf.id]);
+
+  useEffect(() => {
+    setShelfDisplayIds((prev) => prev.filter((id) => shelfBookIds.has(id)).slice(0, 6));
+  }, [shelf.books]);
+
+  useEffect(() => {
+    localStorage.setItem(`${SHELF_SELECTION_KEY_PREFIX}${shelf.id}`, JSON.stringify(shelfDisplayIds));
+  }, [shelf.id, shelfDisplayIds]);
+
+  useEffect(() => {
+    setIsEditMode(false);
+    setOpenMenuBookId(null);
+    setShowMoveTargetsForBookId(null);
+    setShowAddTargetsForBookId(null);
+  }, [shelf.id, shelf.books.length]);
+
+  const toggleShelfDisplayBook = (bookId: string) => {
+    setShelfDisplayIds((prev) => {
+      if (prev.includes(bookId)) return prev.filter((id) => id !== bookId);
+      if (prev.length >= 6) return prev;
+      return [...prev, bookId];
+    });
   };
+
+  const moveTargets = availableShelves.filter((option) => option.id !== shelf.id);
 
   return (
     <div className="space-y-4">
-      {/* Header */}
-      <div 
-        className="rounded-xl p-5 text-white shadow-sm"
-        style={{
-          background: currentTheme.isGradient
-            ? `linear-gradient(135deg, ${currentTheme.primary} 0%, ${currentTheme.secondary} 100%)`
-            : currentTheme.primary
-        }}
-      >
-        <button 
-          onClick={onBack}
-          className="mb-3 p-1.5 -ml-1.5 rounded-lg hover:bg-white/10 transition-colors"
-        >
-          <ArrowLeft className="w-4 h-4" />
-        </button>
-        
+      <div className="rounded-3xl p-4 sm:p-5" style={{ background: 'linear-gradient(120deg, #3298ff 0%, #f83aef 100%)' }}>
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-white/15 rounded-lg">
-              <Icon className="w-5 h-5" />
-            </div>
-            <div>
-              <h1 className="text-xl font-semibold text-white">{shelf.name}</h1>
-              <p className="text-white/70 text-xs mt-0.5">{shelf.books.length} {shelf.books.length === 1 ? 'book' : 'books'}</p>
-            </div>
+          <button
+            onClick={onBack}
+            className="w-10 h-10 rounded-2xl flex items-center justify-center"
+            style={{ backgroundColor: 'rgba(255,255,255,0.18)' }}
+          >
+            <ArrowLeft className="w-5 h-5 text-white" />
+          </button>
+          <div className="flex-1 px-3">
+            <h1 className="text-2xl font-bold text-white">{shelf.name}</h1>
+            <p className="text-sm text-white/80">{shelf.books.length} books</p>
           </div>
-          <div className="flex items-center gap-2">
-            {onAddBook && (
+          {onAddBook ? (
+            <div className="flex items-center gap-2">
+              {canModifyShelf && shelf.books.length > 0 && (
+                <button
+                  onClick={() => {
+                    setIsEditMode((prev) => !prev);
+                    setOpenMenuBookId(null);
+                    setShowMoveTargetsForBookId(null);
+                  }}
+                  className="px-2.5 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5"
+                  style={{ backgroundColor: 'rgba(255,255,255,0.18)', color: '#fff' }}
+                >
+                  {isEditMode ? <X className="w-4 h-4" /> : <PencilLine className="w-4 h-4" />}
+                  {isEditMode ? 'Done' : 'Edit Shelf'}
+                </button>
+              )}
               <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  e.preventDefault();
-                  onAddBook();
-                }}
-                className="p-2 bg-white/15 rounded-lg hover:bg-white/25 transition-colors"
+                onClick={onAddBook}
+                className="w-10 h-10 rounded-2xl flex items-center justify-center"
+                style={{ backgroundColor: 'rgba(255,255,255,0.18)' }}
               >
-                <Plus className="w-5 h-5" />
+                <Plus className="w-5 h-5 text-white" />
               </button>
-            )}
-          </div>
+            </div>
+          ) : (
+            <div className="w-10 h-10" />
+          )}
         </div>
       </div>
 
-      {/* Books Grid */}
-      {shelf.books.length > 0 ? (
-        <div className="grid grid-cols-3 gap-3">
-          {shelf.books.map((book, index) => (
-            <motion.div
-              key={index}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: index * 0.05 }}
-              onClick={() => onBookClick(book)}
-              className="cursor-pointer"
-            >
-              <div className="aspect-[2/3] rounded-lg overflow-hidden shadow-md mb-2 relative">
-                <BookCover 
-                  src={book.cover} 
-                  alt={book.title}
-                  className="w-full h-full object-cover hover:scale-105 transition-transform duration-300"
-                />
-                {book.rating && (
-                  <div className="absolute bottom-1.5 right-1.5 bg-black/70 backdrop-blur-sm rounded-full px-2 py-1 flex items-center gap-1">
-                    <Star className="w-3 h-3 text-yellow-400 fill-yellow-400" />
-                    <span className="text-[10px] text-white font-semibold">{book.rating}</span>
-                  </div>
-                )}
-              </div>
-              <h3 className="text-xs font-semibold line-clamp-2 mb-0.5" style={{ color: currentTheme.textColor === 'light' ? '#f3f4f6' : '#111827' }}>{book.title}</h3>
-              <p className="text-[10px] line-clamp-1" style={{ color: currentTheme.textColor === 'light' ? '#9ca3af' : '#6b7280' }}>{book.author}</p>
-            </motion.div>
-          ))}
-        </div>
-      ) : (
-        <div 
-          className="rounded-xl p-8 text-center relative overflow-hidden"
-          style={{
-            background: currentTheme.textColor === 'light' 
-              ? 'rgba(255, 255, 255, 0.05)' 
-              : 'rgba(255, 255, 255, 0.95)'
-          }}
-        >
-          <div 
-            className="inline-flex p-4 rounded-2xl mb-3 shadow-lg"
+      <div className="max-h-[58vh] overflow-y-auto pr-1">
+        {hasOverflowShelf && (
+          <button
+            onClick={() => setShowShelfPicker((prev) => !prev)}
+            className="w-full mb-3 rounded-lg px-3 py-2 text-xs font-semibold border"
             style={{
-              background: currentTheme.isGradient
-                ? `linear-gradient(135deg, ${currentTheme.primary} 0%, ${currentTheme.secondary} 100%)`
-                : currentTheme.primary
+              borderColor: showShelfPicker ? '#fbbf24' : '#2a2f3a',
+              color: showShelfPicker ? '#fbbf24' : '#cbd5e1',
+              backgroundColor: showShelfPicker ? 'rgba(251,191,36,0.08)' : 'transparent',
             }}
           >
-            <Icon className="w-8 h-8 text-white" />
+            {showShelfPicker
+              ? `Picking books shown on shelf (${shelfDisplayIds.length}/6)`
+              : 'Pick your books to show on your shelf'}
+          </button>
+        )}
+
+        {shelf.books.length === 0 && (
+          <div
+            className="rounded-xl p-3 text-sm mb-4"
+            style={{
+              borderColor: '#2a2f3a',
+              borderWidth: '1px',
+              color: '#94a3b8',
+            }}
+          >
+            No books yet in this shelf.
           </div>
-          <h3 
-            className="font-bold mb-1"
-            style={{ color: currentTheme.textColor === 'light' ? '#f3f4f6' : '#111827' }}
-          >
-            No books yet
-          </h3>
-          <p 
-            className="text-sm"
-            style={{ color: currentTheme.textColor === 'light' ? '#9ca3af' : '#6b7280' }}
-          >
-            Start adding books to this shelf!
-          </p>
-        </div>
-      )}
+        )}
+
+        {shelf.books.length > 0 && (
+          <div className="grid grid-cols-3 gap-3 mb-5">
+            {shelf.books.map((book, index) => {
+              const displayRating =
+                typeof book.rating === 'number'
+                  ? book.rating
+                  : typeof book.averageRating === 'number'
+                    ? Number(book.averageRating.toFixed(2))
+                    : null;
+
+              return (
+                <motion.div
+                  key={book.id}
+                  initial={{ opacity: 0, y: 16 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: index * 0.03 }}
+                  className="w-full"
+                >
+                  <button
+                    onClick={() => {
+                      if (isEditMode) return;
+                      onBookClick(book);
+                    }}
+                    className="relative w-full aspect-[2/3] rounded-xl overflow-hidden shadow-md mb-2"
+                  >
+                    <BookCover src={book.cover} alt={book.title} className="w-full h-full object-cover" />
+                    {displayRating !== null && (
+                      <div className="absolute right-2 bottom-2 inline-flex items-center gap-1 rounded-full px-2 py-1 bg-black/80 text-amber-100 text-xs font-semibold">
+                        <Star className="w-3.5 h-3.5 text-yellow-400 fill-yellow-400" />
+                        <span>{Number.isInteger(displayRating) ? displayRating : displayRating.toFixed(2)}</span>
+                      </div>
+                    )}
+                  </button>
+                  <div className="text-[13px] leading-tight font-semibold text-slate-100 line-clamp-1">{book.title}</div>
+                  <div className="text-[11px] text-slate-400 line-clamp-1 mb-2">{book.author}</div>
+                  {hasOverflowShelf && showShelfPicker && (
+                    <button
+                      onClick={() => toggleShelfDisplayBook(book.id)}
+                      className="w-full rounded-lg px-2.5 py-1.5 text-xs font-semibold border"
+                      style={{
+                        borderColor: shelfDisplayIds.includes(book.id) ? '#fbbf24' : '#2a2f3a',
+                        color: shelfDisplayIds.includes(book.id) ? '#fbbf24' : '#cbd5e1',
+                        backgroundColor: shelfDisplayIds.includes(book.id) ? 'rgba(251,191,36,0.08)' : 'transparent',
+                        opacity: !shelfDisplayIds.includes(book.id) && shelfDisplayIds.length >= 6 ? 0.55 : 1,
+                      }}
+                      disabled={!shelfDisplayIds.includes(book.id) && shelfDisplayIds.length >= 6}
+                    >
+                      {shelfDisplayIds.includes(book.id) ? 'Hide on shelf' : 'Show on shelf'}
+                    </button>
+                  )}
+                  {isEditMode && (
+                    <div className="relative">
+                      <button
+                        onClick={() => {
+                          setOpenMenuBookId((prev) => (prev === book.id ? null : book.id));
+                          setShowMoveTargetsForBookId(null);
+                        }}
+                        className="w-full rounded-lg px-2.5 py-1.5 text-xs font-semibold border inline-flex items-center justify-center gap-1.5"
+                        style={{
+                          borderColor: '#2a2f3a',
+                          color: '#cbd5e1',
+                          backgroundColor: 'transparent',
+                        }}
+                      >
+                        Actions
+                        <ChevronDown className="w-3.5 h-3.5" />
+                      </button>
+
+                      {openMenuBookId === book.id && (
+                        <div
+                          className="absolute z-30 left-0 right-0 mt-1 rounded-lg border p-1.5 space-y-1"
+                          style={{
+                            borderColor: '#2a2f3a',
+                            backgroundColor: 'rgba(15, 20, 30, 0.98)',
+                          }}
+                        >
+                          {canModifyShelf && onRemoveBookFromShelf && (
+                            <button
+                              onClick={() => {
+                                onRemoveBookFromShelf(book.id);
+                                setOpenMenuBookId(null);
+                              }}
+                              className="w-full text-left rounded-md px-2 py-1.5 text-xs font-semibold"
+                              style={{ color: '#fca5a5', backgroundColor: 'rgba(239,68,68,0.08)' }}
+                            >
+                              Remove from shelf
+                            </button>
+                          )}
+
+                          {onMoveBookToShelf && moveTargets.length > 0 && (
+                            <>
+                              <button
+                                onClick={() => {
+                                  setShowMoveTargetsForBookId((prev) => (prev === book.id ? null : book.id))
+                                  setShowAddTargetsForBookId(null);
+                                }}
+                                className="w-full text-left rounded-md px-2 py-1.5 text-xs font-semibold"
+                                style={{ color: '#cbd5e1', backgroundColor: 'transparent' }}
+                              >
+                                Move to another shelf
+                              </button>
+                              {showMoveTargetsForBookId === book.id && (
+                                <div className="space-y-1 max-h-28 overflow-y-auto">
+                                  {moveTargets.map((target) => (
+                                    <button
+                                      key={`${book.id}-${target.id}`}
+                                      onClick={() => {
+                                        onMoveBookToShelf(book.id, target.id);
+                                        setOpenMenuBookId(null);
+                                        setShowMoveTargetsForBookId(null);
+                                        setShowAddTargetsForBookId(null);
+                                      }}
+                                      className="w-full text-left rounded-md px-2 py-1.5 text-xs"
+                                      style={{ color: '#93c5fd', backgroundColor: 'rgba(59,130,246,0.08)' }}
+                                    >
+                                      {target.name}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </>
+                          )}
+
+                          {onAddBookToShelf && moveTargets.length > 0 && (
+                            <button
+                              onClick={() => {
+                                setShowAddTargetsForBookId((prev) => (prev === book.id ? null : book.id));
+                                setShowMoveTargetsForBookId(null);
+                              }}
+                              className="w-full text-left rounded-md px-2 py-1.5 text-xs font-semibold"
+                              style={{ color: '#cbd5e1', backgroundColor: 'transparent' }}
+                            >
+                              Add to another shelf
+                            </button>
+                          )}
+                          {onAddBookToShelf && showAddTargetsForBookId === book.id && (
+                            <div className="space-y-1 max-h-28 overflow-y-auto">
+                              {moveTargets.map((target) => (
+                                <button
+                                  key={`add-${book.id}-${target.id}`}
+                                  onClick={() => {
+                                    onAddBookToShelf(book.id, target.id);
+                                    setOpenMenuBookId(null);
+                                    setShowMoveTargetsForBookId(null);
+                                    setShowAddTargetsForBookId(null);
+                                  }}
+                                  className="w-full text-left rounded-md px-2 py-1.5 text-xs"
+                                  style={{ color: '#86efac', backgroundColor: 'rgba(34,197,94,0.1)' }}
+                                >
+                                  {target.name}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </motion.div>
+              );
+            })}
+          </div>
+        )}
+
+        {showSuggestions && canModifyShelf && onToggleBookInShelf && !isEditMode && (
+          <>
+            <div className="text-xs font-semibold text-slate-300 mb-2">Suggestions to add to {shelf.name}</div>
+            <div className="space-y-2 mb-3">
+              {suggestedBooks.length === 0 && (
+                <div className="text-xs text-slate-500">All books are already in this shelf.</div>
+              )}
+              {suggestedBooks.map((book) => (
+                <div
+                  key={`shelf-suggestion-${book.id}`}
+                  className="rounded-xl p-2.5 flex items-center gap-3"
+                  style={{
+                    borderColor: '#2a2f3a',
+                    borderWidth: '1px',
+                  }}
+                >
+                  <div className="w-10 h-14 rounded overflow-hidden flex-shrink-0">
+                    <BookCover src={book.cover} alt={book.title} className="w-full h-full object-cover" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-semibold text-slate-100 line-clamp-1">{book.title}</div>
+                    <div className="text-xs text-slate-400 line-clamp-1">{book.author}</div>
+                  </div>
+                  <button
+                    onClick={() => onToggleBookInShelf(book.id)}
+                    className="rounded-lg px-2.5 py-1.5 text-xs font-semibold border"
+                    style={{
+                      borderColor: '#2a2f3a',
+                      color: '#cbd5e1',
+                      backgroundColor: 'transparent',
+                    }}
+                  >
+                    Add to shelf
+                  </button>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+      </div>
     </div>
   );
 }
