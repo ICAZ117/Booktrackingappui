@@ -117,6 +117,11 @@ const normalizeStatus = (status: Book['status'] | string | undefined): Book['sta
   return status as Book['status'];
 };
 
+const normalizeCoverUrl = (cover?: string) => {
+  if (!cover) return '';
+  return cover.startsWith('http://') ? cover.replace('http://', 'https://') : cover;
+};
+
 const applyFinishedProgressDefaults = (book: Book): Book => {
   if (book.status !== 'finished') return book;
 
@@ -143,7 +148,7 @@ const normalizeBook = (book: Partial<Book>): Book | null => {
     id: String(book.id),
     title: String(book.title),
     author: book.author ? String(book.author) : 'Unknown Author',
-    cover: book.cover ? String(book.cover) : '',
+    cover: normalizeCoverUrl(book.cover ? String(book.cover) : ''),
     status: normalizeStatus(book.status),
     rating: book.rating,
     progress: book.progress,
@@ -198,7 +203,7 @@ const rowToBook = (row: BookRow): Book => ({
   id: row.id,
   title: row.title,
   author: row.author,
-  cover: row.cover,
+  cover: normalizeCoverUrl(row.cover),
   status: normalizeStatus(row.status),
   rating: row.rating,
   progress: row.progress,
@@ -228,7 +233,7 @@ const bookToRow = (book: Book, userId: string): BookRow => ({
   id: book.id,
   title: book.title,
   author: book.author,
-  cover: book.cover,
+  cover: normalizeCoverUrl(book.cover),
   status: book.status,
   rating: book.rating,
   progress: book.progress,

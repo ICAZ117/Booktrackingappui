@@ -12,9 +12,13 @@ interface BookCoverProps {
  * This prevents console warnings for books without covers
  */
 export function BookCover({ src, alt, className, style }: BookCoverProps) {
+  const normalizedSrc = src?.startsWith('http://') ? src.replace('http://', 'https://') : src;
+
   // Only pass src to ImageWithFallback if it's a valid URL
   // This prevents the console.warn in ImageWithFallback for missing covers
-  const validSrc = src && src.length > 0 && src.startsWith('http') ? src : undefined;
+  const validSrc = normalizedSrc && normalizedSrc.length > 0 && normalizedSrc.startsWith('http')
+    ? normalizedSrc
+    : undefined;
   
   return (
     <ImageWithFallback 

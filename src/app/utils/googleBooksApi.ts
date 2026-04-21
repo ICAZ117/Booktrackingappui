@@ -403,16 +403,82 @@ async function fetchFromCustomEndpoint(params: SearchBooksParams): Promise<Googl
     const payload = await response.json();
     if (!payload) return [];
 
+    const normalizeEndpointItem = (item: any, index: number): GoogleBook | null => {
+      if (!item || typeof item !== 'object') return null;
+
+      if (item.volumeInfo && typeof item.volumeInfo === 'object') {
+        const title = item.volumeInfo.title || item.title || 'Untitled';
+        const authors = Array.isArray(item.volumeInfo.authors)
+          ? item.volumeInfo.authors
+          : [item.author || 'Unknown Author'];
+        const thumbnail = ensureHttps(item.volumeInfo.imageLinks?.thumbnail);
+        const smallThumbnail = ensureHttps(item.volumeInfo.imageLinks?.smallThumbnail);
+
+        return {
+          id: String(item.id || item.external_id || `endpoint-${index}`),
+          volumeInfo: {
+            ...item.volumeInfo,
+            title,
+            authors,
+            imageLinks: thumbnail || smallThumbnail
+              ? {
+                  thumbnail: thumbnail || smallThumbnail,
+                  smallThumbnail: smallThumbnail || thumbnail,
+                }
+              : item.volumeInfo.imageLinks,
+          },
+        };
+      }
+
+      if (item.title) {
+        return {
+          id: String(item.external_id || item.id || `endpoint-${index}`),
+          volumeInfo: {
+            title: String(item.title),
+            authors: [String(item.author || 'Unknown Author')],
+            description: item.description,
+            categories: Array.isArray(item.genres)
+              ? item.genres
+              : item.genre
+                ? [String(item.genre)]
+                : undefined,
+            language: item.language,
+            averageRating: item.rating,
+            ratingsCount: item.ratings_count,
+            pageCount: item.pages,
+            publishedDate: item.published_date,
+            imageLinks: item.cover
+              ? {
+                  thumbnail: ensureHttps(String(item.cover)),
+                  smallThumbnail: ensureHttps(String(item.cover)),
+                }
+              : undefined,
+            industryIdentifiers: item.isbn
+              ? [{ type: 'ISBN_13', identifier: String(item.isbn) }]
+              : undefined,
+            printType: String(item.format || '').toLowerCase().includes('audio') ? 'AUDIOBOOK' : 'BOOK',
+          },
+        };
+      }
+
+      return null;
+    };
+
+    const toGoogleBooks = (items: any[]) =>
+      items
+        .map((item, index) => normalizeEndpointItem(item, index))
+        .filter((book): book is GoogleBook => Boolean(book));
+
     if (Array.isArray(payload.items)) {
-      return payload.items as GoogleBook[];
+      return toGoogleBooks(payload.items);
     }
 
     if (Array.isArray(payload.results)) {
-      return payload.results as GoogleBook[];
+      return toGoogleBooks(payload.results);
     }
 
     if (Array.isArray(payload)) {
-      return payload as GoogleBook[];
+      return toGoogleBooks(payload);
     }
 
     return [];
@@ -748,18 +814,24 @@ export async function searchBooks(params: SearchBooksParams): Promise<GoogleBook
       : catalogRecords;
   const catalogBooks = filteredCatalogRecords.map((record, index) => catalogRecordToGoogleBook(record, index));
 
-  const endpointResult = await fetchFromCustomEndpoint(params);
-  if (endpointResult) {
-    const authorMode = looksLikeAuthorQuery(params.query);
-    const targetCount = authorMode ? Math.max(params.maxResults || 20, 40) : params.maxResults || 20;
-    const deduped = dedupeBooks(endpointResult).slice(0, targetCount);
-    writeCachedSearch(params, deduped);
-    return deduped;
-  }
-
   const authorMode = looksLikeAuthorQuery(params.query);
   const targetCount = authorMode ? Math.max(params.maxResults || 20, 60) : params.maxResults || 20;
   const authorQuery = `inauthor:"${params.query}"`;
+  const endpointResult = await fetchFromCustomEndpoint(params);
+
+  if (endpointResult && endpointResult.length > 0) {
+    const mergedEndpoint = dedupeBooks(
+      [...catalogBooks, ...endpointResult],
+      preferredLanguage || 'en',
+    );
+    const rankedEndpoint = rankAndFilterBooks(mergedEndpoint, params.query);
+    const deduped = rankedEndpoint.slice(0, targetCount);
+
+    if (deduped.length > 0) {
+      writeCachedSearch(params, deduped);
+      return deduped;
+    }
+  }
 
   const [
     googleResults,
