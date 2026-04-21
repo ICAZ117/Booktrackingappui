@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from 'react';
+import { useState } from 'react';
 import { X, Upload, FileJson, FileSpreadsheet, Book, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useTheme } from '../contexts/ThemeContext';
@@ -12,8 +12,6 @@ interface ImportBooksModalProps {
 
 export function ImportBooksModal({ isOpen, onClose, onImport }: ImportBooksModalProps) {
   const { currentTheme } = useTheme();
-  const fileInputId = useId();
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [importStatus, setImportStatus] = useState<'idle' | 'processing' | 'enriching' | 'success' | 'error'>('idle');
   const [importedCount, setImportedCount] = useState(0);
@@ -55,10 +53,6 @@ export function ImportBooksModal({ isOpen, onClose, onImport }: ImportBooksModal
     // Mobile browsers often suppress `change` when the same file is picked again.
     // Resetting value before picker opens guarantees `change`/`input` re-fires.
     event.currentTarget.value = '';
-  };
-
-  const handleUploadClick = () => {
-    fileInputRef.current?.click();
   };
 
   const parseCSV = (text: string): any[] => {
@@ -625,16 +619,14 @@ export function ImportBooksModal({ isOpen, onClose, onImport }: ImportBooksModal
 
               {/* File Upload */}
               <div>
-                <button
-                  type="button"
-                  onClick={handleUploadClick}
-                  className="block w-full p-6 border-2 border-dashed rounded-2xl cursor-pointer transition-all hover:scale-[1.02] text-left"
+                <div
+                  className="w-full p-4 border-2 border-dashed rounded-2xl"
                   style={{
                     borderColor: selectedFile ? currentTheme.accentColor : currentTheme.borderColor,
                     backgroundColor: currentTheme.backgroundColor,
                   }}
                 >
-                  <div className="flex flex-col items-center text-center gap-2">
+                  <div className="flex flex-col items-center text-center gap-3">
                     <div
                       className="w-12 h-12 rounded-full flex items-center justify-center"
                       style={{
@@ -665,7 +657,7 @@ export function ImportBooksModal({ isOpen, onClose, onImport }: ImportBooksModal
                     ) : (
                       <>
                         <div className="text-sm font-semibold" style={{ color: textColor }}>
-                          Choose a file
+                          Choose a file (Android-safe picker)
                         </div>
                         <div className="text-xs" style={{ color: mutedColor }}>
                           CSV or JSON format
@@ -673,28 +665,13 @@ export function ImportBooksModal({ isOpen, onClose, onImport }: ImportBooksModal
                       </>
                     )}
                   </div>
-                </button>
-                <input
-                  ref={fileInputRef}
-                  id={fileInputId}
-                  type="file"
-                  accept="*/*"
-                  onClick={handleFileInputClick}
-                  onChange={handleFileSelect}
-                  onInput={handleFileInput}
-                  className="sr-only"
-                />
-                <div className="mt-3">
-                  <div className="text-[11px] mb-1" style={{ color: mutedColor }}>
-                    If phone picker is flaky, use native chooser:
-                  </div>
                   <input
                     type="file"
                     accept="*/*"
                     onClick={handleFileInputClick}
                     onChange={handleFileSelect}
                     onInput={handleFileInput}
-                    className="w-full text-xs"
+                    className="mt-3 w-full text-sm"
                     style={{ color: textColor }}
                   />
                 </div>
