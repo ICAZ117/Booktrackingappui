@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { X, Upload, FileJson, FileSpreadsheet, Book, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useTheme } from '../contexts/ThemeContext';
@@ -12,6 +12,7 @@ interface ImportBooksModalProps {
 
 export function ImportBooksModal({ isOpen, onClose, onImport }: ImportBooksModalProps) {
   const { currentTheme } = useTheme();
+  const fileInputId = useId();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [importStatus, setImportStatus] = useState<'idle' | 'processing' | 'enriching' | 'success' | 'error'>('idle');
@@ -655,12 +656,24 @@ export function ImportBooksModal({ isOpen, onClose, onImport }: ImportBooksModal
                 </button>
                 <input
                   ref={fileInputRef}
-                  id="file-upload"
+                  id={fileInputId}
                   type="file"
                   accept="*/*"
                   onChange={handleFileSelect}
                   className="sr-only"
                 />
+                <div className="mt-3">
+                  <div className="text-[11px] mb-1" style={{ color: mutedColor }}>
+                    If phone picker is flaky, use native chooser:
+                  </div>
+                  <input
+                    type="file"
+                    accept="*/*"
+                    onChange={handleFileSelect}
+                    className="w-full text-xs"
+                    style={{ color: textColor }}
+                  />
+                </div>
               </div>
 
               {/* Status Messages */}
