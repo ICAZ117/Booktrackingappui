@@ -23,18 +23,32 @@ export function ImportBooksModal({ isOpen, onClose, onImport }: ImportBooksModal
 
   console.log('📦 ImportBooksModal rendered. onImport type:', typeof onImport, 'isOpen:', isOpen);
 
+  const applySelectedFile = (file?: File | null) => {
+    if (!file) return false;
+    console.log('📁 File selected:', file.name, 'Size:', file.size, 'Type:', file.type);
+    setSelectedFile(file);
+    setImportStatus('idle');
+    setErrorMessage('');
+    return true;
+  };
+
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      console.log('📁 File selected:', file.name, 'Size:', file.size, 'Type:', file.type);
-      setSelectedFile(file);
-      setImportStatus('idle');
-      setErrorMessage('');
-      // Allow selecting the same file again later.
-      event.target.value = '';
-    } else {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    if (applySelectedFile(file)) return;
+
+    // Some mobile browsers briefly report an empty FileList on change.
+    setTimeout(() => {
+      const lateFile = input.files?.[0];
+      if (applySelectedFile(lateFile)) return;
       console.log('❌ No file selected');
-    }
+    }, 0);
+  };
+
+  const handleFileInput = (event: React.FormEvent<HTMLInputElement>) => {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    applySelectedFile(file);
   };
 
   const handleUploadClick = () => {
@@ -660,6 +674,7 @@ export function ImportBooksModal({ isOpen, onClose, onImport }: ImportBooksModal
                   type="file"
                   accept="*/*"
                   onChange={handleFileSelect}
+                  onInput={handleFileInput}
                   className="sr-only"
                 />
                 <div className="mt-3">
@@ -670,6 +685,7 @@ export function ImportBooksModal({ isOpen, onClose, onImport }: ImportBooksModal
                     type="file"
                     accept="*/*"
                     onChange={handleFileSelect}
+                    onInput={handleFileInput}
                     className="w-full text-xs"
                     style={{ color: textColor }}
                   />
