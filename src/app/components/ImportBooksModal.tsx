@@ -13,6 +13,7 @@ interface ImportBooksModalProps {
 export function ImportBooksModal({ isOpen, onClose, onImport }: ImportBooksModalProps) {
   const { currentTheme } = useTheme();
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [pastedData, setPastedData] = useState('');
   const [importStatus, setImportStatus] = useState<'idle' | 'processing' | 'enriching' | 'success' | 'error'>('idle');
   const [importedCount, setImportedCount] = useState(0);
   const [errorMessage, setErrorMessage] = useState('');
@@ -412,25 +413,29 @@ export function ImportBooksModal({ isOpen, onClose, onImport }: ImportBooksModal
   };
 
   const handleImport = async () => {
-    if (!selectedFile) {
+    if (!selectedFile && !pastedData.trim()) {
       console.log('❌ No file selected for import');
       return;
     }
 
     console.log('🚀 Starting import process...');
-    console.log('📁 Selected file:', selectedFile.name, selectedFile.type, selectedFile.size);
+    if (selectedFile) {
+      console.log('📁 Selected file:', selectedFile.name, selectedFile.type, selectedFile.size);
+    } else {
+      console.log('📝 Using pasted data import');
+    }
     setImportStatus('processing');
 
     try {
-      console.log('📖 Reading file contents...');
-      const text = await selectedFile.text();
+      console.log('📖 Reading import contents...');
+      const text = selectedFile ? await selectedFile.text() : pastedData;
       console.log(`✅ File read successfully. Length: ${text.length} characters`);
       console.log('First 200 characters:', text.substring(0, 200));
       
       let books: any[] = [];
       
       // Detect file type by content, not just extension
-      const lowerName = selectedFile.name.toLowerCase();
+      const lowerName = selectedFile?.name?.toLowerCase() || '';
       const isJSON = text.trim().startsWith('{') || text.trim().startsWith('[');
       const hasCommas = text.includes(',');
 
@@ -444,7 +449,7 @@ export function ImportBooksModal({ isOpen, onClose, onImport }: ImportBooksModal
         console.log('🔍 Detected CSV/text file, parsing...');
         books = parseCSV(text);
       } else {
-        throw new Error(`Unsupported file format for "${selectedFile.name}". Please use CSV, CVS, TXT, or JSON.`);
+        throw new Error(`Unsupported import format${selectedFile ? ` for "${selectedFile.name}"` : ''}. Please use CSV, CVS, TXT, or JSON.`);
       }
 
       if (books.length === 0) {
@@ -492,6 +497,7 @@ export function ImportBooksModal({ isOpen, onClose, onImport }: ImportBooksModal
         console.log('✅ Modal closed');
         // Reset state
         setSelectedFile(null);
+        setPastedData('');
         setImportStatus('idle');
         setEnrichmentProgress(null);
       }, 1500);
@@ -677,6 +683,31 @@ export function ImportBooksModal({ isOpen, onClose, onImport }: ImportBooksModal
                 </div>
               </div>
 
+              {/* Paste Fallback */}
+              <div>
+                <h3 className="text-sm font-semibold mb-2" style={{ color: textColor }}>
+                  Android fallback: paste CSV/JSON text
+                </h3>
+                <textarea
+                  value={pastedData}
+                  onChange={(e) => {
+                    setPastedData(e.target.value);
+                    if (e.target.value.trim().length > 0) {
+                      setSelectedFile(null);
+                      setImportStatus('idle');
+                      setErrorMessage('');
+                    }
+                  }}
+                  placeholder="Paste your exported CSV text here if file picker fails..."
+                  className="w-full min-h-[100px] rounded-xl border p-3 text-xs resize-y"
+                  style={{
+                    backgroundColor: currentTheme.backgroundColor,
+                    borderColor: currentTheme.borderColor,
+                    color: textColor,
+                  }}
+                />
+              </div>
+
               {/* Status Messages */}
               {importStatus === 'processing' && (
                 <div
@@ -795,7 +826,7 @@ export function ImportBooksModal({ isOpen, onClose, onImport }: ImportBooksModal
                 </button>
                 <button
                   onClick={handleImport}
-                  disabled={!selectedFile || importStatus === 'processing' || importStatus === 'enriching'}
+                  disabled={(!selectedFile && !pastedData.trim()) || importStatus === 'processing' || importStatus === 'enriching'}
                   className="flex-1 py-3 rounded-xl font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                   style={{
                     background: currentTheme.isGradient
