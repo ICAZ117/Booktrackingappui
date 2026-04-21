@@ -415,20 +415,21 @@ export function ImportBooksModal({ isOpen, onClose, onImport }: ImportBooksModal
       let books: any[] = [];
       
       // Detect file type by content, not just extension
+      const lowerName = selectedFile.name.toLowerCase();
       const isJSON = text.trim().startsWith('{') || text.trim().startsWith('[');
       const hasCommas = text.includes(',');
 
-      if (selectedFile.name.endsWith('.json') || isJSON) {
+      if (lowerName.endsWith('.json') || isJSON) {
         console.log('🔍 Detected JSON file');
         const data = JSON.parse(text);
         // Handle both array of books and nested formats
         books = Array.isArray(data) ? data : (data.books || data.reading || []);
         console.log(`📚 Extracted ${books.length} books from JSON`);
-      } else if (selectedFile.name.endsWith('.csv') || selectedFile.name.endsWith('.cvs') || selectedFile.name.endsWith('.txt') || hasCommas) {
+      } else if (lowerName.endsWith('.csv') || lowerName.endsWith('.cvs') || lowerName.endsWith('.txt') || hasCommas) {
         console.log('🔍 Detected CSV/text file, parsing...');
         books = parseCSV(text);
       } else {
-        throw new Error('Unsupported file format. Please use CSV or JSON.');
+        throw new Error(`Unsupported file format for "${selectedFile.name}". Please use CSV, CVS, TXT, or JSON.`);
       }
 
       if (books.length === 0) {
@@ -656,7 +657,7 @@ export function ImportBooksModal({ isOpen, onClose, onImport }: ImportBooksModal
                   ref={fileInputRef}
                   id="file-upload"
                   type="file"
-                  accept=".csv,.cvs,.json,.txt,text/csv,text/plain,application/json,application/csv,text/comma-separated-values,application/vnd.ms-excel"
+                  accept="*/*"
                   onChange={handleFileSelect}
                   className="sr-only"
                 />
