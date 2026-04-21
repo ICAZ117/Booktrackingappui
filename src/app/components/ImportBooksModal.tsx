@@ -58,7 +58,7 @@ export function ImportBooksModal({ isOpen, onClose, onImport }: ImportBooksModal
 
   const parseCSV = (text: string): any[] => {
     // Proper CSV parser that handles quoted fields with commas
-    const parseCSVLine = (line: string): string[] => {
+    const parseCSVLine = (line: string, delimiter = ','): string[] => {
       const result: string[] = [];
       let current = '';
       let inQuotes = false;
@@ -76,7 +76,7 @@ export function ImportBooksModal({ isOpen, onClose, onImport }: ImportBooksModal
             // Toggle quote state
             inQuotes = !inQuotes;
           }
-        } else if (char === ',' && !inQuotes) {
+        } else if (char === delimiter && !inQuotes) {
           // End of field
           result.push(current.trim());
           current = '';
@@ -95,7 +95,11 @@ export function ImportBooksModal({ isOpen, onClose, onImport }: ImportBooksModal
       throw new Error('CSV file must have at least a header row and one data row');
     }
 
-    const headers = parseCSVLine(lines[0]).map(h => h.trim().toLowerCase());
+    const firstLine = lines.find((line) => line.trim().length > 0) || '';
+    const delimiter = firstLine.includes('\t') ? '\t' : ',';
+    const headers = parseCSVLine(lines[0], delimiter).map(h => h.trim().toLowerCase());
+    const knownTitleHeaders = new Set(['title', 'book title', 'booktitle']);
+    const hasRecognizedHeaders = headers.some((h) => knownTitleHeaders.has(h));
     const books: any[] = [];
 
     console.log('📄 CSV Headers detected:', headers);
@@ -107,7 +111,7 @@ export function ImportBooksModal({ isOpen, onClose, onImport }: ImportBooksModal
     for (let i = 1; i < lines.length; i++) {
       if (!lines[i].trim()) continue;
       
-      const values = parseCSVLine(lines[i]);
+      const values = parseCSVLine(lines[i], delimiter);
       const book: any = {};
 
       headers.forEach((header, index) => {
@@ -396,6 +400,52 @@ export function ImportBooksModal({ isOpen, onClose, onImport }: ImportBooksModal
       } else {
         console.log(`⚠️ Skipped row ${i}: no title found`);
       }
+    }
+
+    // Fallback for pasted tabular rows from mobile Google Sheets where
+    // first row is data (not recognized headers).
+    if (books.length === 0 && !hasRecognizedHeaders) {
+      console.log('🧩 No recognized headers found; trying headerless/tabular fallback mapping...');
+      const fallbackRows = lines.filter((line) => line.trim().length > 0).map((line) => parseCSVLine(line, delimiter));
+
+      fallbackRows.forEach((values) => {
+        // Common mobile Sheets order seen in exports:
+        // [flag, title, author, isbn, rating, flag, format, status, dateRead, pages, ...]
+        const title = values[1]?.trim() || values[0]?.trim() || '';
+        const author = values[2]?.trim() || '';
+        if (!title) return;
+
+        const isbnRaw = values[3]?.trim() || '';
+        const ratingRaw = values[4]?.trim() || '';
+        const formatRaw = values[6]?.trim() || '';
+        const statusRaw = values[7]?.trim() || '';
+        const dateReadRaw = values[8]?.trim() || '';
+        const pagesRaw = values[9]?.trim() || '';
+
+        const fallbackBook: any = {
+          title,
+          author: author || 'Unknown Author',
+          isbn: isbnRaw ? isbnRaw.replace(/[^0-9X]/gi, '') : undefined,
+          format: formatRaw || undefined,
+          dateRead: dateReadRaw || undefined,
+          finishDate: dateReadRaw || undefined,
+          status: 'finished',
+        };
+
+        const pages = parseInt((pagesRaw || '').replace(/[^0-9]/g, ''), 10);
+        if (!isNaN(pages) && pages > 0) fallbackBook.pages = pages;
+
+        const rating = parseFloat(ratingRaw);
+        if (!isNaN(rating) && rating > 0 && rating <= 5) fallbackBook.rating = rating;
+
+        const normalizedStatus = (statusRaw || '').toLowerCase();
+        if (normalizedStatus.includes('want') || normalizedStatus.includes('to-read')) fallbackBook.status = 'want-to-read';
+        else if (normalizedStatus.includes('reading') && !normalizedStatus.includes('to-read')) fallbackBook.status = 'reading';
+        else if (normalizedStatus.includes('dnf')) fallbackBook.status = 'dnf';
+        else if (normalizedStatus.includes('read') || normalizedStatus.includes('finished')) fallbackBook.status = 'finished';
+
+        books.push(fallbackBook);
+      });
     }
 
     console.log(`📚 Successfully parsed ${books.length} books from CSV`);
