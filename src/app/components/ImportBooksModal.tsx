@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { X, Upload, FileJson, FileSpreadsheet, Book, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useTheme } from '../contexts/ThemeContext';
@@ -12,6 +12,7 @@ interface ImportBooksModalProps {
 
 export function ImportBooksModal({ isOpen, onClose, onImport }: ImportBooksModalProps) {
   const { currentTheme } = useTheme();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [importStatus, setImportStatus] = useState<'idle' | 'processing' | 'enriching' | 'success' | 'error'>('idle');
   const [importedCount, setImportedCount] = useState(0);
@@ -28,9 +29,15 @@ export function ImportBooksModal({ isOpen, onClose, onImport }: ImportBooksModal
       setSelectedFile(file);
       setImportStatus('idle');
       setErrorMessage('');
+      // Allow selecting the same file again later.
+      event.target.value = '';
     } else {
       console.log('❌ No file selected');
     }
+  };
+
+  const handleUploadClick = () => {
+    fileInputRef.current?.click();
   };
 
   const parseCSV = (text: string): any[] => {
@@ -417,7 +424,7 @@ export function ImportBooksModal({ isOpen, onClose, onImport }: ImportBooksModal
         // Handle both array of books and nested formats
         books = Array.isArray(data) ? data : (data.books || data.reading || []);
         console.log(`📚 Extracted ${books.length} books from JSON`);
-      } else if (selectedFile.name.endsWith('.csv') || selectedFile.name.endsWith('.txt') || hasCommas) {
+      } else if (selectedFile.name.endsWith('.csv') || selectedFile.name.endsWith('.cvs') || selectedFile.name.endsWith('.txt') || hasCommas) {
         console.log('🔍 Detected CSV/text file, parsing...');
         books = parseCSV(text);
       } else {
@@ -596,9 +603,10 @@ export function ImportBooksModal({ isOpen, onClose, onImport }: ImportBooksModal
 
               {/* File Upload */}
               <div>
-                <label
-                  htmlFor="file-upload"
-                  className="block w-full p-6 border-2 border-dashed rounded-2xl cursor-pointer transition-all hover:scale-[1.02]"
+                <button
+                  type="button"
+                  onClick={handleUploadClick}
+                  className="block w-full p-6 border-2 border-dashed rounded-2xl cursor-pointer transition-all hover:scale-[1.02] text-left"
                   style={{
                     borderColor: selectedFile ? currentTheme.accentColor : currentTheme.borderColor,
                     backgroundColor: currentTheme.backgroundColor,
@@ -643,14 +651,15 @@ export function ImportBooksModal({ isOpen, onClose, onImport }: ImportBooksModal
                       </>
                     )}
                   </div>
-                  <input
-                    id="file-upload"
-                    type="file"
-                    accept=".csv,.json,.txt,text/csv,text/plain,application/json,application/csv,text/comma-separated-values"
-                    onChange={handleFileSelect}
-                    className="hidden"
-                  />
-                </label>
+                </button>
+                <input
+                  ref={fileInputRef}
+                  id="file-upload"
+                  type="file"
+                  accept=".csv,.cvs,.json,.txt,text/csv,text/plain,application/json,application/csv,text/comma-separated-values,application/vnd.ms-excel"
+                  onChange={handleFileSelect}
+                  className="sr-only"
+                />
               </div>
 
               {/* Status Messages */}
