@@ -51,6 +51,12 @@ export function ImportBooksModal({ isOpen, onClose, onImport }: ImportBooksModal
     applySelectedFile(file);
   };
 
+  const handleFileInputClick = (event: React.MouseEvent<HTMLInputElement>) => {
+    // Mobile browsers often suppress `change` when the same file is picked again.
+    // Resetting value before picker opens guarantees `change`/`input` re-fires.
+    event.currentTarget.value = '';
+  };
+
   const handleUploadClick = () => {
     fileInputRef.current?.click();
   };
@@ -673,6 +679,7 @@ export function ImportBooksModal({ isOpen, onClose, onImport }: ImportBooksModal
                   id={fileInputId}
                   type="file"
                   accept="*/*"
+                  onClick={handleFileInputClick}
                   onChange={handleFileSelect}
                   onInput={handleFileInput}
                   className="sr-only"
@@ -684,6 +691,7 @@ export function ImportBooksModal({ isOpen, onClose, onImport }: ImportBooksModal
                   <input
                     type="file"
                     accept="*/*"
+                    onClick={handleFileInputClick}
                     onChange={handleFileSelect}
                     onInput={handleFileInput}
                     className="w-full text-xs"
