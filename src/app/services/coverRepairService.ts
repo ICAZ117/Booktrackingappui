@@ -1,5 +1,5 @@
 import type { Book } from '../contexts/BooksContext';
-import { getBookByISBN, searchBooksByTitle } from '../utils/googleBooksApi';
+import { searchPremiumBookByIsbn, searchPremiumBooksByTitle } from '../utils/discoveryEngine';
 
 interface RepairOptions {
   maxBooks?: number;
@@ -25,17 +25,13 @@ export async function repairMissingBookCovers(
       let nextCover = '';
 
       if (book.isbn) {
-        const byIsbn = await getBookByISBN(book.isbn);
-        if (byIsbn?.volumeInfo?.imageLinks?.thumbnail) {
-          nextCover = byIsbn.volumeInfo.imageLinks.thumbnail;
-        } else if (byIsbn?.volumeInfo?.imageLinks?.smallThumbnail) {
-          nextCover = byIsbn.volumeInfo.imageLinks.smallThumbnail;
-        }
+        const byIsbn = await searchPremiumBookByIsbn(book.isbn);
+        nextCover = byIsbn?.cover || '';
       }
 
       if (!nextCover) {
         const query = book.author ? `${book.title} ${book.author}` : book.title;
-        const matches = await searchBooksByTitle(query);
+        const matches = await searchPremiumBooksByTitle(query);
         nextCover = matches[0]?.cover || '';
       }
 

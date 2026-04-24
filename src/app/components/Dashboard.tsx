@@ -13,7 +13,7 @@ import { DataFixTool } from './DataFixTool';
 import { ReadingStories, StreakStory, BooksStory, AudiobooksStory, PagesStory, ThisWeekStory, ReadingGoalsStory, DetailedStatsStory, MonthlyRecapStory, YearInReviewStory, TopBooksStory, StreakDetailsStory, GenreBreakdownStory, ReadingSpeedStory, RatingBreakdownStory, ReadingCalendarStory, MonthlyBooksGridStory, MonthlyStatsGridStory, PagesPerDayChartStory, AverageStatsStory } from './ReadingStories';
 import { useTheme, getTextColorForBackground } from '../contexts/ThemeContext';
 import { useBooks } from '../contexts/BooksContext';
-import { convertGoogleBookToBookData, getPopularBooksFeed, getTrendingBooks, searchBooks } from '../utils/googleBooksApi';
+import { getPremiumPopularBooks, getPremiumRecommendations } from '../utils/discoveryEngine';
 import { LoadingSpinner } from './LoadingSpinner';
 import { ErrorMessage } from './ErrorMessage';
 import { motion } from 'motion/react';
@@ -44,19 +44,6 @@ type DiscoveryBook = {
 };
 
 const FAVORITES_SHELF_SELECTION_KEY = 'readtrack_favorites_shelf_selection_ids';
-
-const normalizeText = (value?: string) => (value || '').toLowerCase().replace(/\s+/g, ' ').trim();
-const normalizeIsbn = (value?: string) => (value || '').replace(/[^0-9x]/gi, '').toLowerCase();
-
-const getDiscoveryKey = (book: { title?: string; author?: string; isbn?: string }) => {
-  const isbn = normalizeIsbn(book.isbn);
-  if (isbn) return `isbn:${isbn}`;
-
-  const normalizedTitle = normalizeText(book.title);
-  const normalizedAuthor = normalizeText(book.author);
-  if (!normalizedTitle) return '';
-  return `${normalizedTitle}::${normalizedAuthor}`;
-};
 
 export function Dashboard({ onBookSelect, onNavigate, onOpenImport, onBookFinished }: { onBookSelect?: (book: any) => void; onNavigate?: (view: 'badges') => void; onOpenImport?: () => void; onBookFinished?: (book: any) => void }) {
   const { currentTheme } = useTheme();
@@ -91,7 +78,6 @@ export function Dashboard({ onBookSelect, onNavigate, onOpenImport, onBookFinish
     }
   });
   const [popularBooks, setPopularBooks] = useState<DiscoveryBook[]>([]);
-  const [popularBooksSource, setPopularBooksSource] = useState<'nyt' | 'live-trending'>('live-trending');
   const [popularBooksFetchedAt, setPopularBooksFetchedAt] = useState<string>('');
   const [recommendedBooks, setRecommendedBooks] = useState<DiscoveryBook[]>([]);
   const [isLoadingPopularBooks, setIsLoadingPopularBooks] = useState(false);
@@ -664,15 +650,15 @@ export function Dashboard({ onBookSelect, onNavigate, onOpenImport, onBookFinish
     const fetchPopularBooks = async () => {
       setIsLoadingPopularBooks(true);
       try {
-        const popularFeed = await getPopularBooksFeed();
-        const mapped = popularFeed.books
-          .filter((book) => book.title && book.author)
-          .slice(0, 12);
+        const popularFeed = await getPremiumPopularBooks({
+          userBooks: books,
+          readingSessions,
+          limit: 12,
+        });
 
         if (isActive) {
-          setPopularBooks(mapped);
-          setPopularBooksSource(popularFeed.source);
-          setPopularBooksFetchedAt(popularFeed.fetchedAt);
+          setPopularBooks(popularFeed);
+          setPopularBooksFetchedAt(new Date().toISOString());
         }
       } catch (error) {
         console.error('Failed to fetch dashboard popular books:', error);
@@ -690,7 +676,7 @@ export function Dashboard({ onBookSelect, onNavigate, onOpenImport, onBookFinish
     return () => {
       isActive = false;
     };
-  }, []);
+  }, [books, readingSessions]);
 
   // Personalized recommendation feed based on user reading history.
   useEffect(() => {
@@ -704,98 +690,11 @@ export function Dashboard({ onBookSelect, onNavigate, onOpenImport, onBookFinish
 
       setIsLoadingRecommendedBooks(true);
       try {
-        const ownedKeys = new Set(
-          books
-            .map((book) => getDiscoveryKey(book))
-            .filter(Boolean),
-        );
-
-        const authorCounts: Record<string, number> = {};
-        const genreCounts: Record<string, number> = {};
-        const highRatedFinished = books
-          .filter((book) => book.status === 'finished' && (book.rating || 0) >= 4)
-          .sort((a, b) => (b.rating || 0) - (a.rating || 0))
-          .slice(0, 3);
-
-        books
-          .filter((book) => book.status === 'reading' || book.status === 'finished')
-          .forEach((book) => {
-            if (book.author) {
-              authorCounts[book.author] = (authorCounts[book.author] || 0) + (book.status === 'reading' ? 2 : 1);
-            }
-
-            const primaryGenre = book.genre || book.categories?.[0];
-            if (primaryGenre) {
-              genreCounts[primaryGenre] = (genreCounts[primaryGenre] || 0) + (book.status === 'reading' ? 2 : 1);
-            }
-          });
-
-        const topAuthors = Object.entries(authorCounts)
-          .sort((a, b) => b[1] - a[1])
-          .slice(0, 3)
-          .map(([author]) => author);
-
-        const topGenres = Object.entries(genreCounts)
-          .sort((a, b) => b[1] - a[1])
-          .slice(0, 3)
-          .map(([genre]) => genre);
-
-        const queryPlans: Array<{ query: string; reason: string }> = [];
-        const seenQueries = new Set<string>();
-        const addQuery = (query: string, reason: string) => {
-          const trimmed = query.trim();
-          if (!trimmed || seenQueries.has(trimmed)) return;
-          seenQueries.add(trimmed);
-          queryPlans.push({ query: trimmed, reason });
-        };
-
-        topAuthors.forEach((author) => addQuery(`inauthor:"${author}"`, `Because you read ${author}`));
-        topGenres.forEach((genre) => addQuery(`subject:${genre} fiction`, `Popular in your favorite genre: ${genre}`));
-        highRatedFinished.forEach((book) =>
-          addQuery(`${book.author} ${book.genre || 'novel'}`, `Because you liked ${book.title}`),
-        );
-        addQuery('subject:fiction bestseller', 'Popular with readers right now');
-
-        const limitedPlans = queryPlans.slice(0, 6);
-        const settled = await Promise.allSettled(
-          limitedPlans.map((plan) =>
-            searchBooks({
-              query: plan.query,
-              maxResults: 12,
-              orderBy: 'relevance',
-            }),
-          ),
-        );
-
-        const deduped = new Map<string, DiscoveryBook>();
-        settled.forEach((result, index) => {
-          if (result.status !== 'fulfilled') return;
-          const reason = limitedPlans[index]?.reason;
-
-          result.value
-            .map(convertGoogleBookToBookData)
-            .forEach((candidate) => {
-              const key = getDiscoveryKey(candidate);
-              if (!key || ownedKeys.has(key) || deduped.has(key)) return;
-              deduped.set(key, { ...candidate, reason });
-            });
+        const picks = await getPremiumRecommendations({
+          userBooks: books,
+          readingSessions,
+          limit: 12,
         });
-
-        let picks = Array.from(deduped.values()).slice(0, 12);
-
-        if (picks.length < 8) {
-          const fallback = await getTrendingBooks();
-          fallback
-            .map(convertGoogleBookToBookData)
-            .forEach((candidate) => {
-              if (picks.length >= 12) return;
-              const key = getDiscoveryKey(candidate);
-              if (!key || ownedKeys.has(key) || deduped.has(key)) return;
-              deduped.set(key, { ...candidate, reason: 'Popular with readers right now' });
-            });
-
-          picks = Array.from(deduped.values()).slice(0, 12);
-        }
 
         if (isActive) {
           setRecommendedBooks(picks);
@@ -1987,7 +1886,7 @@ export function Dashboard({ onBookSelect, onNavigate, onOpenImport, onBookFinish
           className="text-[11px] -mt-2 mb-3"
           style={{ color: currentTheme.textColor === 'light' ? '#9ca3af' : '#6b7280' }}
         >
-          Source: {popularBooksSource === 'nyt' ? 'NYT Best Sellers' : 'Live Trending Index'}
+          Source: Premium blended index
           {popularBooksFetchedAt ? ` · Updated ${new Date(popularBooksFetchedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}
         </p>
         <div className="flex gap-3 overflow-x-auto pb-2 -mx-4 px-4">

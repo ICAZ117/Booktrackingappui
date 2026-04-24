@@ -1036,6 +1036,7 @@ function AppContent() {
               
               let successCount = 0;
               let errorCount = 0;
+              const successfullyImportedBooks: any[] = [];
               
               console.log(`📥 Starting to add ${importedBooks.length} imported books...`);
               
@@ -1043,12 +1044,46 @@ function AppContent() {
               for (let i = 0; i < importedBooks.length; i++) {
                 const bookData = importedBooks[i];
                 try {
+                  const toNumber = (value: unknown): number | undefined => {
+                    if (typeof value === 'number' && Number.isFinite(value)) return value;
+                    if (typeof value !== 'string') return undefined;
+                    const cleaned = value.replace(/[^0-9.]/g, '');
+                    if (!cleaned) return undefined;
+                    const parsed = Number(cleaned);
+                    return Number.isFinite(parsed) ? parsed : undefined;
+                  };
+
+                  const normalizedStatus =
+                    bookData.status === 'currently-reading'
+                      ? 'reading'
+                      : (bookData.status || 'finished');
+
+                  const normalizedPages = Math.max(0, Math.round(toNumber(bookData.pages) || 0));
+                  const importedCurrentPage = Math.max(0, Math.round(toNumber(bookData.currentPage) || 0));
+                  const importedProgressRaw = toNumber(bookData.progress);
+                  const importedProgress =
+                    importedProgressRaw !== undefined
+                      ? Math.max(0, Math.min(100, importedProgressRaw))
+                      : undefined;
+
+                  const isFinished = normalizedStatus === 'finished';
+                  const finalCurrentPage = isFinished
+                    ? (normalizedPages || importedCurrentPage)
+                    : importedCurrentPage;
+
+                  let finalProgress = isFinished ? 100 : (importedProgress ?? 0);
+                  if (!isFinished && finalProgress === 0 && normalizedPages > 0 && finalCurrentPage > 0) {
+                    finalProgress = Math.min(100, (finalCurrentPage / normalizedPages) * 100);
+                  }
+
+                  const generatedBookId = `imported_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 9)}`;
                   const bookToAdd = {
                     ...bookData,
-                    id: `imported_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 9)}`,
-                    status: bookData.status || 'finished',
-                    currentPage: bookData.currentPage || (bookData.status === 'finished' ? bookData.pages : 0) || 0,
-                    progress: bookData.progress || (bookData.status === 'finished' ? 100 : 0),
+                    id: generatedBookId,
+                    status: normalizedStatus,
+                    pages: normalizedPages,
+                    currentPage: finalCurrentPage,
+                    progress: finalProgress,
                   };
                   
                   console.log(`📖 [${i + 1}/${importedBooks.length}] Adding book: \"${bookToAdd.title}\" by ${bookToAdd.author}`, {
@@ -1059,6 +1094,7 @@ function AppContent() {
                   await addBook(bookToAdd);
                   console.log(`✅ [${i + 1}/${importedBooks.length}] Book added successfully`);
                   successCount++;
+                  successfullyImportedBooks.push(bookToAdd);
                   
                   // Small delay to avoid overwhelming the database
                   if (i < importedBooks.length - 1) {
@@ -1077,7 +1113,7 @@ function AppContent() {
               const currentSessions = JSON.parse(localStorage.getItem('readtrack_sessions') || '[]');
               const newSessions: any[] = [...currentSessions];
               
-              importedBooks.forEach((book: any, index: number) => {
+              successfullyImportedBooks.forEach((book: any, index: number) => {
                 if (book.status === 'finished' && (book.finishDate || book.dateRead) && book.pages) {
                   const finishDate = book.finishDate || book.dateRead;
                   const dateStr = finishDate.split('T')[0]; // Get YYYY-MM-DD format
@@ -1085,7 +1121,7 @@ function AppContent() {
                   // Create a reading session for this book
                   const session = {
                     id: `imported_session_${Date.now()}_${index}_${Math.random().toString(36).substr(2, 9)}`,
-                    bookId: `imported_${Date.now()}_${index}_${Math.random().toString(36).substr(2, 9)}`,
+                    bookId: book.id,
                     pages: book.pages,
                     minutes: Math.round(book.pages * 1.5), // Estimate 1.5 minutes per page
                     date: dateStr,

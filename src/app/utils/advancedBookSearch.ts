@@ -1,4 +1,7 @@
-import { getBookByISBN, searchBooksByTitle } from './googleBooksApi';
+import {
+  searchPremiumBookByIsbn,
+  searchPremiumBooksByTitle,
+} from './discoveryEngine';
 
 export interface BookSearchResult {
   title: string;
@@ -10,7 +13,7 @@ export interface BookSearchResult {
 
 export async function searchBook(title: string, author?: string): Promise<BookSearchResult | null> {
   const query = author ? `${title} ${author}` : title;
-  const results = await searchBooksByTitle(query);
+  const results = await searchPremiumBooksByTitle(query);
   const match = results[0];
   if (!match) return null;
 
@@ -30,14 +33,14 @@ export async function searchBooks(
 }
 
 export async function searchByISBN(isbn: string): Promise<BookSearchResult | null> {
-  const result = await getBookByISBN(isbn);
+  const result = await searchPremiumBookByIsbn(isbn);
   if (!result) return null;
 
   return {
-    title: result.volumeInfo.title,
-    author: result.volumeInfo.authors?.[0],
-    cover: result.volumeInfo.imageLinks?.thumbnail || result.volumeInfo.imageLinks?.smallThumbnail,
-    isbn,
+    title: result.title,
+    author: result.author,
+    cover: result.cover,
+    isbn: result.isbn || isbn,
     source: 'live-provider',
   };
 }

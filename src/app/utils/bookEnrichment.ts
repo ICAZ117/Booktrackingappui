@@ -1,10 +1,11 @@
 import {
-  convertGoogleBookToBookData,
-  getBookByISBN,
-  searchBooks,
-  searchBooksByTitle,
   type BookData,
 } from './googleBooksApi';
+import {
+  searchPremiumBookByIsbn,
+  searchPremiumBooks,
+  searchPremiumBooksByTitle,
+} from './discoveryEngine';
 
 export interface EnrichmentProgress {
   total: number;
@@ -120,11 +121,8 @@ async function findCoverForBook(book: any): Promise<string> {
   const isbn = normalizeIsbn(book?.isbn);
   if (isbn) {
     try {
-      const isbnMatch = await getBookByISBN(isbn);
-      const isbnCover = normalizeCoverUrl(
-        isbnMatch?.volumeInfo?.imageLinks?.thumbnail ||
-          isbnMatch?.volumeInfo?.imageLinks?.smallThumbnail,
-      );
+      const isbnMatch = await searchPremiumBookByIsbn(isbn);
+      const isbnCover = normalizeCoverUrl(isbnMatch?.cover);
       if (hasUsableCover(isbnCover)) return isbnCover;
     } catch (error) {
       console.warn(`Failed ISBN cover lookup for "${book?.title || 'Untitled'}"`, error);
@@ -152,8 +150,8 @@ async function findCoverForBook(book: any): Promise<string> {
 
     for (const queryVariant of queryVariants) {
       try {
-        const googleMatches = await searchBooks({ query: queryVariant, maxResults: 20 });
-        allCandidates.push(...googleMatches.map(convertGoogleBookToBookData));
+        const googleMatches = await searchPremiumBooks({ query: queryVariant, maxResults: 20 });
+        allCandidates.push(...googleMatches);
       } catch {
         // Try next strategy.
       }
@@ -162,7 +160,7 @@ async function findCoverForBook(book: any): Promise<string> {
     // Keep existing lightweight helper as a final Google/OpenLibrary pass.
     if (query) {
       try {
-        const titleMatches = await searchBooksByTitle(query);
+        const titleMatches = await searchPremiumBooksByTitle(query);
         allCandidates.push(...titleMatches);
       } catch {
         // ignore

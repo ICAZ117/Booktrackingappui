@@ -6,14 +6,19 @@ import { BookCover } from './BookCover';
 import { LoadingSpinner } from './LoadingSpinner';
 import {
   BookData,
-  convertGoogleBookToBookData,
-  getGenreDiscoveryBooks,
   getPopularBooksFeed,
   getNytBestSellerBooks,
   getNytBestSellerLists,
-  searchBooks,
   type NytBestSellerListSummary,
 } from '../utils/googleBooksApi';
+import {
+  getCuratedGenreShelves,
+  getPremiumRecommendations,
+  optimizeDiscoveryBooks,
+  searchPremiumBooks,
+  type CuratedGenreShelf,
+} from '../utils/discoveryEngine';
+import { trackCatalogBookEvent, trackCatalogSearchResults } from '../services/catalogService';
 
 type BrowseMode = 'nyt' | 'trending' | 'for-you';
 
@@ -25,40 +30,6 @@ const browseModes: { id: BrowseMode; label: string; icon: typeof Star }[] = [
 
 const genres = ['All', 'Fantasy', 'Romance', 'Thriller', 'Sci-Fi', 'Contemporary', 'Mystery', 'Historical'];
 
-const genreQueryMap: Record<string, string> = {
-  'Sci-Fi': 'science fiction',
-};
-
-const trendingGenreQueries: Record<string, string[]> = {
-  Fantasy: ['subject:fantasy bestseller', 'fantasy booktok', 'epic fantasy novels'],
-  Romance: ['subject:romance bestseller', 'romance booktok', 'contemporary romance novels'],
-  Thriller: ['subject:thriller bestseller', 'psychological thriller books', 'mystery thriller novels'],
-  'Sci-Fi': ['subject:science fiction bestseller', 'science fiction novels', 'space opera books'],
-  Contemporary: ['contemporary fiction bestseller', 'literary fiction novels', 'popular contemporary novels'],
-  Mystery: ['subject:mystery bestseller', 'detective mystery novels', 'crime mystery books'],
-  Historical: ['historical fiction bestseller', 'historical novels', 'world war historical fiction'],
-};
-
-const genreNytKeywords: Record<string, string[]> = {
-  Fantasy: ['fantasy'],
-  Romance: ['romance'],
-  Thriller: ['thriller', 'suspense'],
-  'Sci-Fi': ['science fiction', 'sci-fi'],
-  Contemporary: ['contemporary', 'literary'],
-  Mystery: ['mystery'],
-  Historical: ['historical'],
-};
-
-const genreContentKeywords: Record<string, string[]> = {
-  Fantasy: ['fantasy', 'magic', 'dragon', 'fae', 'sword'],
-  Romance: ['romance', 'love story', 'romantic', 'enemies to lovers'],
-  Thriller: ['thriller', 'suspense', 'psychological', 'crime', 'serial killer'],
-  'Sci-Fi': ['science fiction', 'sci-fi', 'space', 'dystopian', 'future'],
-  Contemporary: ['contemporary', 'literary', 'family drama', 'women fiction'],
-  Mystery: ['mystery', 'detective', 'whodunit', 'investigation'],
-  Historical: ['historical', 'world war', 'victorian', 'period'],
-};
-
 const normalizeText = (value?: string) => (value || '').toLowerCase().replace(/\s+/g, ' ').trim();
 const normalizeIsbn = (value?: string) => (value || '').replace(/[^0-9x]/gi, '').toLowerCase();
 
@@ -69,85 +40,6 @@ const getBookKey = (book: { title?: string; author?: string; isbn?: string }) =>
   const author = normalizeText(book.author);
   if (!title) return '';
   return `${title}::${author}`;
-};
-
-const getGenreRelevanceScore = (book: BookData, genre: string) => {
-  if (genre === 'All') return 1;
-  const keywords = genreContentKeywords[genre] || [genre.toLowerCase()];
-  const genreText = normalizeText(book.genre);
-  const genresText = normalizeText((book.genres || []).join(' '));
-  const titleText = normalizeText(book.title);
-  const descriptionText = normalizeText(book.description);
-
-  let score = 0;
-  keywords.forEach((keywordRaw) => {
-    const keyword = normalizeText(keywordRaw);
-    if (!keyword) return;
-    if (genreText.includes(keyword)) score += 4;
-    if (genresText.includes(keyword)) score += 3;
-    if (titleText.includes(keyword)) score += 2;
-    if (descriptionText.includes(keyword)) score += 1;
-  });
-
-  return score;
-};
-
-const isClearlyOffGenre = (book: BookData, genre: string) => {
-  const haystack = normalizeText(
-    `${book.genre || ''} ${(book.genres || []).join(' ')} ${book.title || ''} ${book.description || ''}`,
-  );
-
-  const blockersByGenre: Record<string, string[]> = {
-    Romance: ['science fiction', 'sci-fi', 'space opera', 'hard sci-fi', 'mystery thriller'],
-    Thriller: ['romance comedy', 'rom-com', 'romcom'],
-    Fantasy: ['self help', 'memoir'],
-    Mystery: ['romance comedy', 'epic fantasy'],
-    Historical: ['space opera', 'cyberpunk'],
-    Contemporary: ['space opera', 'epic fantasy'],
-    'Sci-Fi': ['romance comedy', 'historical romance'],
-  };
-
-  const blockers = blockersByGenre[genre] || [];
-  return blockers.some((keyword) => haystack.includes(keyword));
-};
-
-const rankGenreCandidates = (candidates: BookData[], genre: string) => {
-  const byKey = new Map<string, { book: BookData; score: number }>();
-
-  candidates.forEach((book) => {
-    if (!book.title || !book.author) return;
-    const key = getBookKey(book);
-    if (!key) return;
-
-    const score = getGenreRelevanceScore(book, genre);
-    const existing = byKey.get(key);
-    if (!existing || score > existing.score) {
-      byKey.set(key, { book, score });
-    }
-  });
-
-  const sorted = Array.from(byKey.values()).sort((a, b) => {
-    if (b.score !== a.score) return b.score - a.score;
-    const bCount = b.book.ratingsCount || 0;
-    const aCount = a.book.ratingsCount || 0;
-    if (bCount !== aCount) return bCount - aCount;
-    return (b.book.rating || 0) - (a.book.rating || 0);
-  });
-
-  if (genre === 'All') return sorted.map((item) => item.book).slice(0, 24);
-
-  const strong = sorted.filter((item) => item.score >= 2).map((item) => item.book);
-  if (strong.length > 0) return strong.slice(0, 24);
-
-  const medium = sorted.filter((item) => item.score >= 1).map((item) => item.book);
-  if (medium.length >= 8) return medium.slice(0, 24);
-
-  // Backfill with likely candidates from genre-targeted queries, excluding clearly off-genre items.
-  const soft = sorted
-    .filter((item) => item.score === 0 && !isClearlyOffGenre(item.book, genre))
-    .map((item) => item.book);
-
-  return [...medium, ...soft].slice(0, 24);
 };
 
 export function Browse({ onBookSelect }: { onBookSelect?: (book: any) => void }) {
@@ -168,6 +60,8 @@ export function Browse({ onBookSelect }: { onBookSelect?: (book: any) => void })
   const [isUsingNytFallback, setIsUsingNytFallback] = useState(false);
 
   const [trendingBooks, setTrendingBooks] = useState<BookData[]>([]);
+  const [trendingShelves, setTrendingShelves] = useState<CuratedGenreShelf[]>([]);
+  const [selectedTrendingShelf, setSelectedTrendingShelf] = useState<string>('trending-now');
   const [isLoadingTrending, setIsLoadingTrending] = useState(false);
 
   const [personalizedBooks, setPersonalizedBooks] = useState<BookData[]>([]);
@@ -182,6 +76,7 @@ export function Browse({ onBookSelect }: { onBookSelect?: (book: any) => void })
   };
 
   const handleBookClick = (book: any) => {
+    void trackCatalogBookEvent(book, 'open');
     onBookSelect?.(book);
   };
 
@@ -278,9 +173,12 @@ export function Browse({ onBookSelect }: { onBookSelect?: (book: any) => void })
     const fetchTrending = async () => {
       setIsLoadingTrending(true);
       try {
-        const results = await getGenreDiscoveryBooks(selectedGenre);
+        const shelves = await getCuratedGenreShelves(selectedGenre, 24);
         if (!isActive) return;
-        setTrendingBooks(results.slice(0, 24));
+        setTrendingShelves(shelves);
+        const preferredShelf = shelves.find((shelf) => shelf.id === selectedTrendingShelf) || shelves[0];
+        setSelectedTrendingShelf(preferredShelf?.id || 'trending-now');
+        setTrendingBooks(preferredShelf?.books || []);
       } finally {
         if (isActive) {
           setIsLoadingTrending(false);
@@ -292,7 +190,7 @@ export function Browse({ onBookSelect }: { onBookSelect?: (book: any) => void })
     return () => {
       isActive = false;
     };
-  }, [mode, selectedGenre]);
+  }, [mode, selectedGenre, selectedTrendingShelf]);
 
   useEffect(() => {
     if (mode !== 'for-you' || books.length === 0) return;
@@ -302,56 +200,11 @@ export function Browse({ onBookSelect }: { onBookSelect?: (book: any) => void })
     const fetchPersonalized = async () => {
       setIsLoadingPersonalized(true);
       try {
-        const owned = new Set(books.map((book: any) => getBookKey(book)).filter(Boolean));
-        const authorCounts: Record<string, number> = {};
-        const genreCounts: Record<string, number> = {};
-
-        books.forEach((book: any) => {
-          if (book.status !== 'reading' && book.status !== 'finished') return;
-          if (book.author) {
-            authorCounts[book.author] = (authorCounts[book.author] || 0) + (book.status === 'reading' ? 2 : 1);
-          }
-          const genre = book.genre || book.categories?.[0];
-          if (genre) {
-            genreCounts[genre] = (genreCounts[genre] || 0) + (book.status === 'reading' ? 2 : 1);
-          }
+        const recommendations = await getPremiumRecommendations({
+          userBooks: books,
+          limit: 24,
         });
-
-        const topAuthors = Object.entries(authorCounts)
-          .sort((a, b) => b[1] - a[1])
-          .slice(0, 3)
-          .map(([name]) => name);
-
-        const topGenres = Object.entries(genreCounts)
-          .sort((a, b) => b[1] - a[1])
-          .slice(0, 3)
-          .map(([name]) => name);
-
-        const queries = [
-          ...topAuthors.map((author) => `inauthor:"${author}"`),
-          ...topGenres.map((genre) => `subject:${genre} fiction`),
-          'subject:fiction bestseller',
-        ].slice(0, 6);
-
-        const settled = await Promise.allSettled(
-          queries.map((query) =>
-            searchBooks({ query, maxResults: 16, orderBy: 'relevance' }),
-          ),
-        );
-
-        const deduped = new Map<string, BookData>();
-        settled.forEach((result) => {
-          if (result.status !== 'fulfilled') return;
-          result.value.map(convertGoogleBookToBookData).forEach((candidate) => {
-            const key = getBookKey(candidate);
-            if (!key || owned.has(key) || deduped.has(key)) return;
-            deduped.set(key, candidate);
-          });
-        });
-
-        if (isActive) {
-          setPersonalizedBooks(Array.from(deduped.values()).slice(0, 24));
-        }
+        if (isActive) setPersonalizedBooks(recommendations);
       } finally {
         if (isActive) {
           setIsLoadingPersonalized(false);
@@ -378,13 +231,15 @@ export function Browse({ onBookSelect }: { onBookSelect?: (book: any) => void })
       setIsSearching(true);
       try {
         const authorSearch = looksLikeAuthorQuery(searchQuery);
-        const results = await searchBooks({
+        const results = await searchPremiumBooks({
           query: searchQuery,
           maxResults: authorSearch ? 50 : 24,
         });
 
         if (searchRequestIdRef.current !== requestId) return;
-        setExternalSearchResults(results.map(convertGoogleBookToBookData));
+        const optimizedResults = optimizeDiscoveryBooks(results);
+        setExternalSearchResults(optimizedResults);
+        void trackCatalogSearchResults(optimizedResults, 20);
       } catch (error) {
         if (searchRequestIdRef.current !== requestId) return;
         console.error('Browse search failed', error);
@@ -416,9 +271,12 @@ export function Browse({ onBookSelect }: { onBookSelect?: (book: any) => void })
   const activeResults = useMemo(() => {
     if (searchQuery.trim().length > 0) return searchResults;
     if (mode === 'nyt') return nytBooks;
-    if (mode === 'trending') return trendingBooks;
+    if (mode === 'trending') {
+      const currentShelf = trendingShelves.find((shelf) => shelf.id === selectedTrendingShelf);
+      return currentShelf?.books || trendingBooks;
+    }
     return personalizedBooks;
-  }, [searchQuery, searchResults, mode, nytBooks, trendingBooks, personalizedBooks]);
+  }, [searchQuery, searchResults, mode, nytBooks, trendingBooks, trendingShelves, selectedTrendingShelf, personalizedBooks]);
 
   const showSearchResults = searchQuery.trim().length > 0;
   const showForYouLocked = mode === 'for-you' && books.length === 0 && !showSearchResults;
@@ -513,26 +371,51 @@ export function Browse({ onBookSelect }: { onBookSelect?: (book: any) => void })
       )}
 
       {!showSearchResults && mode === 'trending' && (
-        <div className="flex gap-2 overflow-x-auto pb-2 -mx-4 px-4">
-          {genres.map((genre) => {
-            const active = selectedGenre === genre;
-            return (
-              <button
-                key={genre}
-                onClick={() => setSelectedGenre(genre)}
-                className="px-4 py-2 rounded-xl font-semibold text-xs whitespace-nowrap"
-                style={{
-                  background: active ? getGradientBg() : currentTheme.cardColor,
-                  borderColor: active ? 'transparent' : currentTheme.borderColor,
-                  borderWidth: active ? '0' : '1px',
-                  color: active ? '#ffffff' : (currentTheme.textColor === 'light' ? '#d1d5db' : '#374151'),
-                }}
-              >
-                {genre}
-              </button>
-            );
-          })}
-        </div>
+        <>
+          <div className="flex gap-2 overflow-x-auto pb-2 -mx-4 px-4">
+            {genres.map((genre) => {
+              const active = selectedGenre === genre;
+              return (
+                <button
+                  key={genre}
+                  onClick={() => setSelectedGenre(genre)}
+                  className="px-4 py-2 rounded-xl font-semibold text-xs whitespace-nowrap"
+                  style={{
+                    background: active ? getGradientBg() : currentTheme.cardColor,
+                    borderColor: active ? 'transparent' : currentTheme.borderColor,
+                    borderWidth: active ? '0' : '1px',
+                    color: active ? '#ffffff' : (currentTheme.textColor === 'light' ? '#d1d5db' : '#374151'),
+                  }}
+                >
+                  {genre}
+                </button>
+              );
+            })}
+          </div>
+
+          {trendingShelves.length > 0 && (
+            <div className="flex gap-2 overflow-x-auto pb-2 -mx-4 px-4">
+              {trendingShelves.map((shelf) => {
+                const active = selectedTrendingShelf === shelf.id;
+                return (
+                  <button
+                    key={shelf.id}
+                    onClick={() => setSelectedTrendingShelf(shelf.id)}
+                    className="px-4 py-2 rounded-xl font-semibold text-xs whitespace-nowrap"
+                    style={{
+                      background: active ? getGradientBg() : currentTheme.cardColor,
+                      borderColor: active ? 'transparent' : currentTheme.borderColor,
+                      borderWidth: active ? '0' : '1px',
+                      color: active ? '#ffffff' : (currentTheme.textColor === 'light' ? '#d1d5db' : '#374151'),
+                    }}
+                  >
+                    {shelf.title}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </>
       )}
 
       <div className="flex items-center justify-between">
@@ -545,7 +428,10 @@ export function Browse({ onBookSelect }: { onBookSelect?: (book: any) => void })
             : mode === 'nyt'
             ? 'NYT Best Sellers'
             : mode === 'trending'
-            ? `${selectedGenre} Trending`
+            ? (() => {
+                const shelf = trendingShelves.find((entry) => entry.id === selectedTrendingShelf);
+                return `${selectedGenre} • ${shelf?.title || 'Trending'}`;
+              })()
             : 'Recommended for You'}
         </h2>
         <span

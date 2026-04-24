@@ -84,14 +84,33 @@ create table if not exists public.catalog_books (
   pages integer,
   is_box_set boolean not null default false,
   is_sample boolean not null default false,
+  search_hits integer not null default 0,
+  open_hits integer not null default 0,
+  save_hits integer not null default 0,
+  reading_activity_hits integer not null default 0,
+  popularity_score numeric not null default 0,
+  engagement_score numeric not null default 0,
+  metadata_quality_score numeric not null default 0,
+  last_engagement_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.catalog_books add column if not exists search_hits integer not null default 0;
+alter table public.catalog_books add column if not exists open_hits integer not null default 0;
+alter table public.catalog_books add column if not exists save_hits integer not null default 0;
+alter table public.catalog_books add column if not exists reading_activity_hits integer not null default 0;
+alter table public.catalog_books add column if not exists popularity_score numeric not null default 0;
+alter table public.catalog_books add column if not exists engagement_score numeric not null default 0;
+alter table public.catalog_books add column if not exists metadata_quality_score numeric not null default 0;
+alter table public.catalog_books add column if not exists last_engagement_at timestamptz;
 
 create index if not exists idx_catalog_books_title on public.catalog_books using btree (title);
 create index if not exists idx_catalog_books_author on public.catalog_books using btree (author);
 create index if not exists idx_catalog_books_published_date on public.catalog_books using btree (published_date);
 create index if not exists idx_catalog_books_search on public.catalog_books using gin (to_tsvector('simple', coalesce(title,'') || ' ' || coalesce(author,'')));
+create index if not exists idx_catalog_books_popularity on public.catalog_books using btree (popularity_score desc);
+create index if not exists idx_catalog_books_engagement on public.catalog_books using btree (engagement_score desc);
 
 alter table public.books enable row level security;
 alter table public.reading_sessions enable row level security;

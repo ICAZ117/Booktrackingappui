@@ -4,13 +4,14 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
 import { useBooks } from "./BooksContext";
 import type { AuthorData, SeriesData } from "../utils/authorDatabase";
 import { extractSeries, getAllCachedAuthors } from "../utils/authorDatabase";
-import { searchBooksByAuthor } from "../utils/googleBooksApi";
+import { searchPremiumBooksByAuthor } from "../utils/discoveryEngine";
 
 interface AuthorContextType {
   authors: AuthorData[];
@@ -244,7 +245,7 @@ async function buildAuthorsWithBibliography(
     const libraryBooks = books.filter((book) => normalizeText(book.author) === normalizeText(authorName));
 
     try {
-      const providerBooks = await searchBooksByAuthor(authorName);
+      const providerBooks = await searchPremiumBooksByAuthor(authorName);
       const filteredProviderBooks = (providerBooks || []).filter((providerBook) => {
         return (
           isLikelyAuthorMatch(providerBook.author, authorName) &&
@@ -275,17 +276,22 @@ export function AuthorProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncProgress, setSyncProgress] = useState<{ current: number; total: number; authorName: string } | null>(null);
+  const syncInFlightRef = useRef(false);
+  const lastAutoSyncSignatureRef = useRef("");
 
   useEffect(() => {
     setAuthors(buildAuthorsFromBooks(books));
   }, [books]);
 
   const runFullSync = useCallback(async () => {
+    if (syncInFlightRef.current) return;
+
     if (books.length === 0) {
       setAuthors([]);
       return;
     }
 
+    syncInFlightRef.current = true;
     setIsLoading(true);
     setIsSyncing(true);
     setSyncProgress(null);
@@ -299,8 +305,32 @@ export function AuthorProvider({ children }: { children: ReactNode }) {
       setIsLoading(false);
       setIsSyncing(false);
       setSyncProgress(null);
+      syncInFlightRef.current = false;
     }
   }, [books]);
+
+  useEffect(() => {
+    if (books.length === 0) {
+      lastAutoSyncSignatureRef.current = "";
+      return;
+    }
+
+    const signature = books
+      .map((book) => `${book.id}:${book.author || ""}:${book.status || ""}`)
+      .sort()
+      .join("|");
+
+    if (signature === lastAutoSyncSignatureRef.current) return;
+    lastAutoSyncSignatureRef.current = signature;
+
+    const timeoutId = window.setTimeout(() => {
+      runFullSync();
+    }, 300);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [books, runFullSync]);
 
   const refreshAuthor = useCallback(
     async (authorName: string) => {
@@ -311,7 +341,7 @@ export function AuthorProvider({ children }: { children: ReactNode }) {
       try {
         setIsSyncing(true);
         setSyncProgress({ current: 1, total: 1, authorName });
-        const providerBooks = await searchBooksByAuthor(authorName);
+        const providerBooks = await searchPremiumBooksByAuthor(authorName);
         const filteredProviderBooks = (providerBooks || []).filter((providerBook) => {
           return (
             isLikelyAuthorMatch(providerBook.author, authorName) &&

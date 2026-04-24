@@ -39,11 +39,13 @@ export function ImageWithFallback(props: ImageWithFallbackProps) {
         src={ERROR_IMG_SRC} 
         alt="No cover available" 
         className="w-12 h-12 opacity-30"
+        loading="lazy"
+        decoding="async"
         data-original-url={src}
         data-error-reason={!hasValidSrc ? 'invalid-src' : 'load-error'}
       />
     </div>
   ) : (
-    <img src={src} alt={alt} className={className} style={style} {...rest} onError={handleError} />
+    <img src={src} alt={alt} className={className} style={style} loading="lazy" decoding="async" {...rest} onError={handleError} />
   )
 }

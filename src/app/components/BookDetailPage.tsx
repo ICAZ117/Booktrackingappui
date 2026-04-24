@@ -131,6 +131,7 @@ export function BookDetailPage({ book, onBack, onUpdateBook, onBookFinished }: B
     // Initialize based on book's actual status
     if (!book.status) return 'Want to Read';
     const statusMap: Record<string, string> = {
+      'reading': 'Currently Reading',
       'currently-reading': 'Currently Reading',
       'want-to-read': 'Want to Read',
       'finished': 'Finished',
@@ -246,21 +247,17 @@ export function BookDetailPage({ book, onBack, onUpdateBook, onBookFinished }: B
 
   // Sync status with book's actual status
   useEffect(() => {
-    // If book is at 100% but not marked as finished, update status
-    if (book.progress >= 100 && book.status !== 'finished') {
-      setCurrentStatus('Finished');
-      onUpdateBook?.({ status: 'finished', progress: 100, finishDate: new Date().toISOString() });
-    } else if (book.status) {
-      const statusMap: Record<string, string> = {
-        'reading': 'Currently Reading',
-        'want-to-read': 'Want to Read',
-        'finished': 'Finished',
-        'dnf': 'DNF',
-        'on-hold': 'On Hold'
-      };
-      setCurrentStatus(statusMap[book.status] || 'Want to Read');
-    }
-  }, [book.status, book.progress]);
+    if (!book.status) return;
+    const statusMap: Record<string, string> = {
+      'reading': 'Currently Reading',
+      'currently-reading': 'Currently Reading',
+      'want-to-read': 'Want to Read',
+      'finished': 'Finished',
+      'dnf': 'DNF',
+      'on-hold': 'On Hold'
+    };
+    setCurrentStatus(statusMap[book.status] || 'Want to Read');
+  }, [book.status]);
 
   // Check if book is in favorites shelf on mount
   useEffect(() => {
@@ -492,7 +489,8 @@ export function BookDetailPage({ book, onBack, onUpdateBook, onBookFinished }: B
                               
                               // Generate book ID if it doesn't exist
                               const bookId = book.id || Date.now().toString();
-                              const statusKey = status.toLowerCase().replace(/ /g, '-');
+                              const statusKeyRaw = status.toLowerCase().replace(/ /g, '-');
+                              const statusKey = statusKeyRaw === 'currently-reading' ? 'reading' : statusKeyRaw;
                               
                               // If book doesn't exist, add it first
                               if (!book.id) {
@@ -536,9 +534,23 @@ export function BookDetailPage({ book, onBack, onUpdateBook, onBookFinished }: B
                               
                               // Update the book status
                               if (book.id) {
+                                const statusUpdates: any = { status: statusKey };
+
+                                // Reread flow: moving finished -> currently reading should reopen the book.
+                                if (statusKey === 'reading') {
+                                  statusUpdates.startDate = book.startDate || new Date().toISOString().split('T')[0];
+                                  if (book.status === 'finished') {
+                                    statusUpdates.progress = 0;
+                                    statusUpdates.currentPage = 0;
+                                    statusUpdates.currentMinutes = 0;
+                                    statusUpdates.finishDate = '';
+                                    statusUpdates.dateRead = '';
+                                  }
+                                }
+
                                 // If book already exists, update it
-                                await updateBook(bookId, { status: statusKey });
-                                onUpdateBook?.({ status: statusKey });
+                                await updateBook(bookId, statusUpdates);
+                                onUpdateBook?.(statusUpdates);
                               }
                               
                               setCurrentStatus(status);
@@ -2600,39 +2612,39 @@ export function BookDetailPage({ book, onBack, onUpdateBook, onBookFinished }: B
                   <button
                     onClick={async () => {
                       if (!book.id) {
-                        // If book doesn't exist, add it with currently-reading status
+                        // If book doesn't exist, add it with reading status
                         const bookId = Date.now().toString();
                         await addBook({
                           ...book,
                           id: bookId,
-                          status: 'currently-reading',
+                          status: 'reading',
                           startDate: new Date().toLocaleDateString('en-US', { 
                             month: 'short', day: 'numeric', year: 'numeric' 
                           })
                         });
                         book.id = bookId;
                       } else {
-                        // Update existing book to currently-reading
+                        // Update existing book to reading
                         await updateBook(book.id, { 
-                          status: 'currently-reading',
+                          status: 'reading',
                           startDate: book.startDate || new Date().toLocaleDateString('en-US', { 
                             month: 'short', day: 'numeric', year: 'numeric' 
                           })
                         });
-                        onUpdateBook?.({ status: 'currently-reading' });
+                        onUpdateBook?.({ status: 'reading' });
                       }
                       setCurrentStatus('Currently Reading');
                       setShowShelfModal(false);
                     }}
                     className="w-full px-4 py-3 rounded-xl text-left text-sm font-medium active:scale-[0.98] transition-all flex items-center justify-between"
                     style={{
-                      background: book.status === 'currently-reading' || currentStatus === 'Currently Reading' ? dynamicGradient : '#2a2a2a',
-                      color: book.status === 'currently-reading' || currentStatus === 'Currently Reading' ? '#ffffff' : '#9ca3af',
-                      border: book.status === 'currently-reading' || currentStatus === 'Currently Reading' ? 'none' : `1px solid ${currentTheme.primary}20`
+                      background: book.status === 'reading' || currentStatus === 'Currently Reading' ? dynamicGradient : '#2a2a2a',
+                      color: book.status === 'reading' || currentStatus === 'Currently Reading' ? '#ffffff' : '#9ca3af',
+                      border: book.status === 'reading' || currentStatus === 'Currently Reading' ? 'none' : `1px solid ${currentTheme.primary}20`
                     }}
                   >
                     <span>📖 Currently Reading</span>
-                    {(book.status === 'currently-reading' || currentStatus === 'Currently Reading') && (
+                    {(book.status === 'reading' || currentStatus === 'Currently Reading') && (
                       <Check className="w-4 h-4 text-white" />
                     )}
                   </button>

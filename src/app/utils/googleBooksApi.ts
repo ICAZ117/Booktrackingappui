@@ -1,6 +1,7 @@
 import {
   buildCatalogUniqueKey,
   searchCatalogBooks,
+  trackCatalogSearchResults,
   upsertCatalogBooks,
   type CatalogBookRecord,
 } from '../services/catalogService';
@@ -829,6 +830,7 @@ export async function searchBooks(params: SearchBooksParams): Promise<GoogleBook
 
     if (deduped.length > 0) {
       writeCachedSearch(params, deduped);
+      void trackCatalogSearchResults(deduped.map(googleBookToCatalogRecord), 20);
       return deduped;
     }
   }
@@ -980,6 +982,7 @@ export async function searchBooks(params: SearchBooksParams): Promise<GoogleBook
   const ranked = rankAndFilterBooks(merged, params.query);
   const deduped = ranked.slice(0, targetCount);
   void upsertCatalogBooks(deduped.map(googleBookToCatalogRecord));
+  void trackCatalogSearchResults(deduped.map(googleBookToCatalogRecord), 20);
   writeCachedSearch(params, deduped);
   return deduped;
 }

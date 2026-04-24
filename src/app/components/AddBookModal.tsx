@@ -3,7 +3,9 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useState, useEffect } from 'react';
 import { BookCover } from './BookCover';
 import { useTheme } from '../contexts/ThemeContext';
-import { searchBooks, getTrendingBooks, convertGoogleBookToBookData, BookData } from '../utils/googleBooksApi';
+import { type BookData } from '../utils/googleBooksApi';
+import { getPremiumPopularBooks, searchPremiumBooks } from '../utils/discoveryEngine';
+import { trackCatalogBookEvent } from '../services/catalogService';
 import { LoadingSpinner } from './LoadingSpinner';
 
 interface AddBookModalProps {
@@ -80,9 +82,8 @@ export function AddBookModal({ isOpen, onClose, onAddBook, availableShelves = []
 
   const loadTrendingBooks = async () => {
     try {
-      const books = await getTrendingBooks();
-      const bookData = books.map(convertGoogleBookToBookData);
-      setTrendingBooks(bookData.slice(0, 9));
+      const books = await getPremiumPopularBooks({ limit: 9 });
+      setTrendingBooks(books.slice(0, 9));
     } catch (error) {
       console.error('Error loading trending books:', error);
       // Fallback to empty array if trending books fail to load
@@ -93,12 +94,11 @@ export function AddBookModal({ isOpen, onClose, onAddBook, availableShelves = []
   const performSearch = async () => {
     setIsSearching(true);
     try {
-      const results = await searchBooks({
+      const results = await searchPremiumBooks({
         query: searchQuery,
         maxResults: 20,
       });
-      const bookData = results.map(convertGoogleBookToBookData);
-      setSearchResults(bookData);
+      setSearchResults(results);
     } catch (error) {
       console.error('Search error:', error);
       setSearchResults([]);
@@ -167,6 +167,7 @@ export function AddBookModal({ isOpen, onClose, onAddBook, availableShelves = []
       });
       
       onAddBook(bookToAdd, shelfIds);
+      void trackCatalogBookEvent(bookToAdd, 'save');
       setShowShelfPopup(false);
       setSelectedBookForShelf(null);
       onClose();
@@ -179,6 +180,7 @@ export function AddBookModal({ isOpen, onClose, onAddBook, availableShelves = []
   const confirmAddBook = () => {
     if (pendingBook) {
       onAddBook(pendingBook, selectedShelfIds);
+      void trackCatalogBookEvent(pendingBook, 'save');
       onClose();
       setView('main');
       setSearchQuery('');
@@ -358,6 +360,7 @@ export function AddBookModal({ isOpen, onClose, onAddBook, availableShelves = []
                                 // Navigate to book detail page
                                 const bookToAdd = { ...book, status: 'want-to-read' };
                                 onAddBook(bookToAdd, []);
+                                void trackCatalogBookEvent(bookToAdd, 'save');
                                 onClose();
                                 setView('main');
                               }}
@@ -449,6 +452,7 @@ export function AddBookModal({ isOpen, onClose, onAddBook, availableShelves = []
                                     // Navigate to book detail page
                                     const bookToAdd = { ...book, status: 'want-to-read' };
                                     onAddBook(bookToAdd, []);
+                                    void trackCatalogBookEvent(bookToAdd, 'save');
                                     onClose();
                                     setView('main');
                                     setSearchQuery('');
